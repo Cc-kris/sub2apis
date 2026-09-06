@@ -107,6 +107,7 @@ func (h *GatewayHandler) Responses(c *gin.Context) {
 	subscription, _ := middleware2.GetSubscriptionFromContext(c)
 
 	service.SetOpsLatencyMs(c, service.OpsAuthLatencyMsKey, time.Since(requestStart).Milliseconds())
+	routingStart := time.Now()
 
 	// 1. Acquire user concurrency slot
 	maxWait := service.CalculateMaxWait(subject.Concurrency)
@@ -219,12 +220,24 @@ func (h *GatewayHandler) Responses(c *gin.Context) {
 		accountReleaseFunc = wrapReleaseOnDone(c.Request.Context(), accountReleaseFunc)
 
 		// 5. Forward request
+		service.SetOpsLatencyMs(c, service.OpsRoutingLatencyMsKey, time.Since(routingStart).Milliseconds())
+		forwardStart := time.Now()
 		writerSizeBeforeForward := c.Writer.Size()
 		forwardBody := body
 		if channelMapping.Mapped {
 			forwardBody = h.gatewayService.ReplaceModelInBody(body, channelMapping.MappedModel)
 		}
 		result, err := h.gatewayService.ForwardAsResponses(c.Request.Context(), c, account, forwardBody, parsedReq)
+		forwardDurationMs := time.Since(forwardStart).Milliseconds()
+		upstreamLatencyMs, _ := getContextInt64(c, service.OpsUpstreamLatencyMsKey)
+		responseLatencyMs := forwardDurationMs
+		if upstreamLatencyMs > 0 && forwardDurationMs > upstreamLatencyMs {
+			responseLatencyMs = forwardDurationMs - upstreamLatencyMs
+		}
+		service.SetOpsLatencyMs(c, service.OpsResponseLatencyMsKey, responseLatencyMs)
+		if err == nil && result != nil && result.FirstTokenMs != nil {
+			service.SetOpsLatencyMs(c, service.OpsTimeToFirstTokenMsKey, int64(*result.FirstTokenMs))
+		}
 
 		if accountReleaseFunc != nil {
 			accountReleaseFunc()

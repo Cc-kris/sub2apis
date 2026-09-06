@@ -2478,8 +2478,10 @@ func (s *OpenAIGatewayService) Forward(ctx context.Context, c *gin.Context, acco
 		logger.LegacyPrintf("service.openai_gateway", "[OpenAI] Removed /responses image_generation tool declaration for disabled group")
 	}
 
-	// 非透传模式下，instructions 为空时注入默认指令。
-	if isInstructionsEmpty(reqBody) && !compatMessagesBridge {
+	// 只有 Codex OAuth 协议需要网关补齐默认 instructions。官方 OpenAI
+	// API-key/兼容上游应保留客户端原始请求；额外注入一段系统指令会改变
+	// 上游 prompt-cache 前缀，并可能让上游重新做完整推理。
+	if isInstructionsEmpty(reqBody) && account.IsOpenAIOAuth() && !compatMessagesBridge {
 		reqBody["instructions"] = "You are a helpful coding assistant."
 		bodyModified = true
 		markPatchSet("instructions", "You are a helpful coding assistant.")
@@ -2627,45 +2629,15 @@ func (s *OpenAIGatewayService) Forward(ctx context.Context, c *gin.Context, acco
 		}
 	}
 
-	// Native API-key Responses requests do not go through the Chat Completions
-	// compatibility injector. Provide the same stable prompt identity here so
-	// the upstream can populate and reuse its prompt cache across turns.
-	if promptCacheKey == "" && account.Type == AccountTypeAPIKey &&
-		account.Platform == PlatformOpenAI && !isOpenAIResponsesCompactPath(c) {
-		cacheKeyBody := body
-		if bodyModified {
-			// Use the effective request after gateway normalization (for example,
-			// the default instructions) so the key describes the prefix actually
-			// sent upstream.
-			if effectiveBody, marshalErr := json.Marshal(reqBody); marshalErr == nil {
-				cacheKeyBody = effectiveBody
-			}
-		}
-		if generatedKey := deriveResponsesPromptCacheKey(cacheKeyBody, upstreamModel, getAPIKeyIDFromContext(c)); generatedKey != "" {
-			promptCacheKey = generatedKey
-			reqBody["prompt_cache_key"] = generatedKey
-			bodyModified = true
-			markPatchSet("prompt_cache_key", generatedKey)
-			logger.L().Debug("openai responses: prompt cache key auto-injected",
-				zap.Int64("account_id", account.ID),
-				zap.String("model", upstreamModel),
-				zap.String("prompt_cache_key_sha256", hashSensitiveValueForLog(generatedKey)),
-			)
-		}
-	}
-
 	// Handle max_output_tokens based on platform and account type
 	if !isCodexCLI {
 		if maxOutputTokens, hasMaxOutputTokens := reqBody["max_output_tokens"]; hasMaxOutputTokens {
 			switch account.Platform {
 			case PlatformOpenAI:
-				// For OpenAI API Key, remove max_output_tokens (not supported)
-				// For OpenAI OAuth (Responses API), keep it (supported)
-				if account.Type == AccountTypeAPIKey {
-					delete(reqBody, "max_output_tokens")
-					bodyModified = true
-					markPatchDelete("max_output_tokens")
-				}
+				// Responses-native OpenAI upstreams support max_output_tokens for
+				// both OAuth and API-key accounts. Preserve the client's explicit
+				// output bound; removing it lets the upstream select a much larger
+				// default and needlessly extends generation time.
 			case PlatformAnthropic:
 				// For Anthropic (Claude), convert to max_tokens
 				delete(reqBody, "max_output_tokens")

@@ -193,6 +193,7 @@ func TestOpenAIGatewayService_Forward_HTTPIngressStaysHTTPWhenWSEnabled(t *testi
 	c.Request = httptest.NewRequest(http.MethodPost, "/openai/v1/responses", nil)
 	c.Request.Header.Set("User-Agent", "custom-client/1.0")
 	SetOpenAIClientTransport(c, OpenAIClientTransportHTTP)
+	c.Set("api_key", &APIKey{ID: 7001})
 
 	upstream := &httpUpstreamRecorder{
 		resp: &http.Response{
@@ -233,13 +234,16 @@ func TestOpenAIGatewayService_Forward_HTTPIngressStaysHTTPWhenWSEnabled(t *testi
 		},
 	}
 
-	body := []byte(`{"model":"gpt-5.1","stream":false,"previous_response_id":"resp_http_keep","input":[{"type":"input_text","text":"hello"}]}`)
+	body := []byte(`{"model":"gpt-5.1","stream":false,"previous_response_id":"resp_http_keep","max_output_tokens":64,"tools":[{"type":"function","name":"lookup","parameters":{"type":"object"}}],"input":[{"type":"input_text","text":"hello"}]}`)
 	result, err := svc.Forward(context.Background(), c, account, body)
 	require.NoError(t, err)
 	require.NotNil(t, result)
 	require.False(t, result.OpenAIWSMode, "HTTP 入站应保持 HTTP 转发")
 	require.NotNil(t, upstream.lastReq, "HTTP 入站应命中 HTTP 上游")
 	require.False(t, gjson.GetBytes(upstream.lastBody, "previous_response_id").Exists(), "HTTP 路径应沿用原逻辑移除 previous_response_id")
+	require.False(t, gjson.GetBytes(upstream.lastBody, "instructions").Exists(), "API Key 不应注入合成 instructions")
+	require.False(t, gjson.GetBytes(upstream.lastBody, "prompt_cache_key").Exists(), "原生 Responses API Key 不应合成 prompt_cache_key")
+	require.Equal(t, float64(64), gjson.GetBytes(upstream.lastBody, "max_output_tokens").Float(), "API Key 应保留显式输出上限")
 
 	decision, _ := c.Get("openai_ws_transport_decision")
 	reason, _ := c.Get("openai_ws_transport_reason")

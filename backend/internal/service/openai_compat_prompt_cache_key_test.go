@@ -25,23 +25,6 @@ func TestShouldAutoInjectPromptCacheKeyForCompat(t *testing.T) {
 	require.False(t, shouldAutoInjectPromptCacheKeyForCompat("gpt-4o"))
 }
 
-func TestDeriveResponsesPromptCacheKey_StableAcrossLaterTurns(t *testing.T) {
-	first := []byte(`{"model":"gpt-5.6-sol","instructions":"repo rules","input":[{"role":"user","content":"first"}]}`)
-	later := []byte(`{"model":"gpt-5.6-sol","instructions":"repo rules","input":[{"role":"user","content":"first"},{"role":"assistant","content":"answer"},{"role":"user","content":"next"}]}`)
-
-	k1 := deriveResponsesPromptCacheKey(first, "gpt-5.6-sol", 287)
-	k2 := deriveResponsesPromptCacheKey(later, "gpt-5.6-sol", 287)
-	require.NotEmpty(t, k1)
-	require.Equal(t, k1, k2)
-	require.NotEqual(t, k1, deriveResponsesPromptCacheKey(first, "gpt-5.6-sol", 353))
-}
-
-func TestDeriveResponsesPromptCacheKey_RequiresStablePrefix(t *testing.T) {
-	body := []byte(`{"model":"gpt-5.6-sol","input":[{"role":"user","content":"only turn text"}]}`)
-	require.Empty(t, deriveResponsesPromptCacheKey(body, "gpt-5.6-sol", 287))
-	require.Empty(t, deriveResponsesPromptCacheKey(body, "gpt-4o", 287))
-}
-
 func TestDeriveCompatPromptCacheKey_StableAcrossLaterTurns(t *testing.T) {
 	base := &apicompat.ChatCompletionsRequest{
 		Model: "gpt-5.4",

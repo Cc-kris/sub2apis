@@ -17,13 +17,13 @@ describe('UsageLatencyHealth', () => {
 
   it('colors first token independently from total duration', () => {
     const wrapper = mount(UsageLatencyHealth, {
-      props: { firstTokenMs: 1200, durationMs: 11000 },
+      props: { firstTokenMs: 1200, durationMs: 61000 },
     })
 
-    expect(wrapper.find('.text-emerald-500').exists()).toBe(true)
-    expect(wrapper.find('.text-amber-500').exists()).toBe(true)
+    expect(wrapper.find('.text-emerald-600').exists()).toBe(true)
+    expect(wrapper.find('.text-amber-600').exists()).toBe(true)
     expect(wrapper.findAll('.bg-emerald-500')).toHaveLength(1)
-    expect(wrapper.findAll('.bg-amber-500')).toHaveLength(1)
+    expect(wrapper.findAll('.bg-amber-400')).toHaveLength(1)
   })
 
   it('marks failed and missing requests distinctly', () => {

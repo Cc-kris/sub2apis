@@ -123,7 +123,9 @@ func (s *GatewayService) ForwardAsResponses(
 	}
 
 	// 11. Send request
+	upstreamStart := time.Now()
 	resp, err := s.httpUpstream.DoWithTLS(upstreamReq, proxyURL, account.ID, account.Concurrency, s.tlsFPProfileService.ResolveTLSProfile(account))
+	SetOpsLatencyMs(c, OpsUpstreamLatencyMsKey, time.Since(upstreamStart).Milliseconds())
 	if err != nil {
 		if resp != nil && resp.Body != nil {
 			_ = resp.Body.Close()

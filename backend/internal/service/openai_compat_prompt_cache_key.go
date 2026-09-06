@@ -11,26 +11,6 @@ import (
 
 const compatPromptCacheKeyPrefix = "compat_cc_"
 
-// deriveResponsesPromptCacheKey builds a tenant-scoped key for native
-// Responses requests when the client did not provide one. The key is based on
-// the reusable prompt prefix only, so later turns retain the same upstream
-// cache identity while unrelated API keys and model families remain isolated.
-func deriveResponsesPromptCacheKey(body []byte, mappedModel string, apiKeyID int64) string {
-	if len(body) == 0 || apiKeyID <= 0 || !shouldAutoInjectPromptCacheKeyForCompat(mappedModel) {
-		return ""
-	}
-	seed := deriveOpenAIStablePrefixSessionSeed(body)
-	if seed == "" {
-		return ""
-	}
-	return compatPromptCacheKeyPrefix + hashSensitiveValueForLog(fmt.Sprintf(
-		"responses:key=%d:model=%s:%s",
-		apiKeyID,
-		normalizeCodexModel(strings.TrimSpace(mappedModel)),
-		seed,
-	))
-}
-
 func shouldAutoInjectPromptCacheKeyForCompat(model string) bool {
 	trimmed := strings.TrimSpace(strings.ToLower(model))
 	// 仅对 Codex OAuth 路径支持的 GPT-5 族开启自动注入，避免 normalizeCodexModel
