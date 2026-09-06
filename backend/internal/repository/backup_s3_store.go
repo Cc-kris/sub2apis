@@ -3,6 +3,8 @@ package repository
 import (
 	"bytes"
 	"context"
+	"crypto/sha256"
+	"encoding/hex"
 	"fmt"
 	"io"
 	"time"
@@ -73,6 +75,62 @@ func (s *S3BackupStore) Upload(ctx context.Context, key string, body io.Reader, 
 		return 0, fmt.Errorf("S3 PutObject: %w", err)
 	}
 	return int64(len(data)), nil
+}
+
+// backupPartObjectKey stores parts as independent objects instead of relying
+// on provider-specific multipart-upload signing. This works with AWS S3,
+// Cloudflare R2 and OSS-compatible endpoints alike, while allowing a failed
+// part to be retried without rewriting the completed parts.
+func backupPartObjectKey(key string, partNo int) string {
+	return fmt.Sprintf("%s.part-%05d", key, partNo)
+}
+
+func (s *S3BackupStore) UploadPart(ctx context.Context, key string, partNo int, body io.Reader, contentType string) (int64, string, error) {
+	if partNo <= 0 {
+		return 0, "", fmt.Errorf("invalid backup part number: %d", partNo)
+	}
+	digest := sha256.New()
+	counting := &countingHashReader{reader: body, hash: digest}
+	partKey := backupPartObjectKey(key, partNo)
+	_, err := s.client.PutObject(ctx, &s3.PutObjectInput{
+		Bucket:      &s.bucket,
+		Key:         &partKey,
+		Body:        counting,
+		ContentType: &contentType,
+	})
+	if err != nil {
+		return 0, "", fmt.Errorf("S3 PutObject part %d: %w", partNo, err)
+	}
+	return counting.n, hex.EncodeToString(digest.Sum(nil)), nil
+}
+
+func (s *S3BackupStore) DownloadPart(ctx context.Context, key string, partNo int) (io.ReadCloser, error) {
+	if partNo <= 0 {
+		return nil, fmt.Errorf("invalid backup part number: %d", partNo)
+	}
+	partKey := backupPartObjectKey(key, partNo)
+	result, err := s.client.GetObject(ctx, &s3.GetObjectInput{Bucket: &s.bucket, Key: &partKey})
+	if err != nil {
+		return nil, fmt.Errorf("S3 GetObject part %d: %w", partNo, err)
+	}
+	return result.Body, nil
+}
+
+type countingHashReader struct {
+	reader io.Reader
+	hash   io.Writer
+	n      int64
+}
+
+func (r *countingHashReader) Read(p []byte) (int, error) {
+	n, err := r.reader.Read(p)
+	if n > 0 {
+		if _, hashErr := r.hash.Write(p[:n]); hashErr != nil {
+			return n, hashErr
+		}
+		r.n += int64(n)
+	}
+	return n, err
 }
 
 func (s *S3BackupStore) Download(ctx context.Context, key string) (io.ReadCloser, error) {

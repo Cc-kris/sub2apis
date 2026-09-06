@@ -419,6 +419,11 @@ func calculateFinanceItems(mode string, attempt UsageUpstreamAttempt, imageOutpu
 		if missing := add("cache_read", attempt.CacheReadTokens, string(PriceUnitPerMillionCacheTokens), card.CacheRead, financeMillion); missing != "" {
 			return nil, missing
 		}
+		if attempt.CacheCreation5mTokens == 0 && attempt.CacheCreation1hTokens == 0 {
+			if missing := add("cache_write", attempt.CacheCreationTokens, string(PriceUnitPerMillionCacheTokens), card.CacheWrite5m, financeMillion); missing != "" {
+				return nil, missing
+			}
+		}
 		if missing := add("cache_write_5m", attempt.CacheCreation5mTokens, string(PriceUnitPerMillionCacheTokens), card.CacheWrite5m, financeMillion); missing != "" {
 			return nil, missing
 		}
@@ -521,7 +526,7 @@ func financeBillingModeSupported(mode string) bool {
 func financeUsagePresent(mode string, attempt UsageUpstreamAttempt, imageOutputTokens int64) bool {
 	switch mode {
 	case "token":
-		return attempt.InputTokens > 0 || attempt.OutputTokens > 0 || attempt.CacheReadTokens > 0 || attempt.CacheCreation5mTokens > 0 || attempt.CacheCreation1hTokens > 0 || imageOutputTokens > 0
+		return attempt.InputTokens > 0 || attempt.OutputTokens > 0 || attempt.CacheReadTokens > 0 || attempt.CacheCreationTokens > 0 || attempt.CacheCreation5mTokens > 0 || attempt.CacheCreation1hTokens > 0 || imageOutputTokens > 0
 	case "per_request":
 		return attempt.RequestCount > 0
 	case "image":
@@ -536,7 +541,7 @@ func financeUsagePresent(mode string, attempt UsageUpstreamAttempt, imageOutputT
 func financeUsageQuantity(mode string, attempt UsageUpstreamAttempt, imageOutputTokens int64) int64 {
 	switch mode {
 	case "token":
-		return attempt.InputTokens + attempt.OutputTokens + attempt.CacheReadTokens + attempt.CacheCreation5mTokens + attempt.CacheCreation1hTokens + imageOutputTokens
+		return attempt.InputTokens + attempt.OutputTokens + attempt.CacheReadTokens + effectiveFinanceCacheCreationTokens(attempt) + imageOutputTokens
 	case "per_request":
 		return attempt.RequestCount
 	case "image":
@@ -553,6 +558,7 @@ func financeUsageDetail(attempt UsageUpstreamAttempt, imageOutputTokens int64) m
 		"input_tokens":             attempt.InputTokens,
 		"output_tokens":            attempt.OutputTokens,
 		"cache_read_tokens":        attempt.CacheReadTokens,
+		"cache_creation_tokens":    attempt.CacheCreationTokens,
 		"cache_creation_5m_tokens": attempt.CacheCreation5mTokens,
 		"cache_creation_1h_tokens": attempt.CacheCreation1hTokens,
 		"image_output_tokens":      imageOutputTokens,
@@ -560,6 +566,13 @@ func financeUsageDetail(attempt UsageUpstreamAttempt, imageOutputTokens int64) m
 		"image_count":              attempt.ImageCount,
 		"video_seconds":            attempt.VideoSeconds,
 	}
+}
+
+func effectiveFinanceCacheCreationTokens(attempt UsageUpstreamAttempt) int64 {
+	if attempt.CacheCreation5mTokens > 0 || attempt.CacheCreation1hTokens > 0 {
+		return attempt.CacheCreation5mTokens + attempt.CacheCreation1hTokens
+	}
+	return attempt.CacheCreationTokens
 }
 
 func mergeFinanceCostStatus(current, next FinanceCostStatus) FinanceCostStatus {

@@ -1,6 +1,7 @@
 package service
 
 import (
+	"net/http"
 	"time"
 
 	infraerrors "github.com/Wei-Shaw/sub2api/internal/pkg/errors"
@@ -55,12 +56,19 @@ const (
 	// providerGeminiPathTemplate Gemini generateContent 路径模板（含 model 占位）。
 	providerGeminiPathTemplate = "/v1beta/models/%s:generateContent"
 
-	// MonitorProviderOpenAI / Anthropic / Gemini provider 字符串常量（也是 ent enum 的实际值）。
-	MonitorProviderOpenAI    = "openai"
-	MonitorProviderAnthropic = "anthropic"
-	MonitorProviderGemini    = "gemini"
-	MonitorProviderGrok      = "grok"
-	MonitorDefaultGrokModel  = "grok-4.5"
+	// MonitorProvider* provider 字符串常量（也是 ent enum 的实际值）。
+	MonitorProviderOpenAI      = "openai"
+	MonitorProviderAnthropic   = "anthropic"
+	MonitorProviderGemini      = "gemini"
+	MonitorProviderGrok        = "grok"
+	MonitorProviderAntigravity = "antigravity"
+	MonitorProviderKimi        = "kimi"
+	MonitorProviderZhipu       = "zhipu"
+	MonitorProviderDeepSeek    = "deepseek"
+	MonitorModeActive          = "active"
+	MonitorModePassive         = "passive"
+	MonitorModeQuota           = "quota"
+	MonitorDefaultGrokModel    = "grok-4.5"
 
 	// MonitorStatusOperational 等监控状态字符串常量（与 ent enum 一致）。
 	MonitorStatusOperational = "operational"
@@ -119,8 +127,17 @@ var (
 	ErrChannelMonitorNotFound = infraerrors.NotFound(
 		"CHANNEL_MONITOR_NOT_FOUND", "channel monitor not found",
 	)
-	ErrChannelMonitorInvalidProvider = infraerrors.BadRequest(
-		"CHANNEL_MONITOR_INVALID_PROVIDER", "provider must be one of openai/anthropic/gemini/grok",
+	ErrChannelMonitorInvalidProvider = infraerrors.New(http.StatusUnprocessableEntity,
+		"CHANNEL_MONITOR_INVALID_PROVIDER", "provider must be one of openai/anthropic/gemini/grok/antigravity/kimi/zhipu/deepseek",
+	)
+	ErrChannelMonitorInvalidMode = infraerrors.BadRequest(
+		"CHANNEL_MONITOR_INVALID_MODE", "channel monitor mode must be active, passive, or quota",
+	)
+	ErrChannelMonitorProviderMode = infraerrors.New(http.StatusUnprocessableEntity,
+		"CHANNEL_MONITOR_PROVIDER_MODE_UNSUPPORTED", "antigravity supports quota mode only",
+	)
+	ErrChannelMonitorAccountProviderMismatch = infraerrors.New(http.StatusUnprocessableEntity,
+		"CHANNEL_MONITOR_ACCOUNT_PROVIDER_MISMATCH", "bound account platform must match monitor provider",
 	)
 	ErrChannelMonitorInvalidAPIMode = infraerrors.BadRequest(
 		"CHANNEL_MONITOR_INVALID_API_MODE", "api_mode must be chat_completions or responses; responses is only supported for openai",

@@ -123,6 +123,20 @@ func (_c *UsageUpstreamAttemptCreate) SetNillableCacheReadTokens(v *int64) *Usag
 	return _c
 }
 
+// SetCacheCreationTokens sets the "cache_creation_tokens" field.
+func (_c *UsageUpstreamAttemptCreate) SetCacheCreationTokens(v int64) *UsageUpstreamAttemptCreate {
+	_c.mutation.SetCacheCreationTokens(v)
+	return _c
+}
+
+// SetNillableCacheCreationTokens sets the "cache_creation_tokens" field if the given value is not nil.
+func (_c *UsageUpstreamAttemptCreate) SetNillableCacheCreationTokens(v *int64) *UsageUpstreamAttemptCreate {
+	if v != nil {
+		_c.SetCacheCreationTokens(*v)
+	}
+	return _c
+}
+
 // SetCacheCreation5mTokens sets the "cache_creation_5m_tokens" field.
 func (_c *UsageUpstreamAttemptCreate) SetCacheCreation5mTokens(v int64) *UsageUpstreamAttemptCreate {
 	_c.mutation.SetCacheCreation5mTokens(v)
@@ -456,6 +470,10 @@ func (_c *UsageUpstreamAttemptCreate) defaults() {
 		v := usageupstreamattempt.DefaultCacheReadTokens
 		_c.mutation.SetCacheReadTokens(v)
 	}
+	if _, ok := _c.mutation.CacheCreationTokens(); !ok {
+		v := usageupstreamattempt.DefaultCacheCreationTokens
+		_c.mutation.SetCacheCreationTokens(v)
+	}
 	if _, ok := _c.mutation.CacheCreation5mTokens(); !ok {
 		v := usageupstreamattempt.DefaultCacheCreation5mTokens
 		_c.mutation.SetCacheCreation5mTokens(v)
@@ -549,6 +567,14 @@ func (_c *UsageUpstreamAttemptCreate) check() error {
 	if v, ok := _c.mutation.CacheReadTokens(); ok {
 		if err := usageupstreamattempt.CacheReadTokensValidator(v); err != nil {
 			return &ValidationError{Name: "cache_read_tokens", err: fmt.Errorf(`ent: validator failed for field "UsageUpstreamAttempt.cache_read_tokens": %w`, err)}
+		}
+	}
+	if _, ok := _c.mutation.CacheCreationTokens(); !ok {
+		return &ValidationError{Name: "cache_creation_tokens", err: errors.New(`ent: missing required field "UsageUpstreamAttempt.cache_creation_tokens"`)}
+	}
+	if v, ok := _c.mutation.CacheCreationTokens(); ok {
+		if err := usageupstreamattempt.CacheCreationTokensValidator(v); err != nil {
+			return &ValidationError{Name: "cache_creation_tokens", err: fmt.Errorf(`ent: validator failed for field "UsageUpstreamAttempt.cache_creation_tokens": %w`, err)}
 		}
 	}
 	if _, ok := _c.mutation.CacheCreation5mTokens(); !ok {
@@ -686,6 +712,10 @@ func (_c *UsageUpstreamAttemptCreate) createSpec() (*UsageUpstreamAttempt, *sqlg
 	if value, ok := _c.mutation.CacheReadTokens(); ok {
 		_spec.SetField(usageupstreamattempt.FieldCacheReadTokens, field.TypeInt64, value)
 		_node.CacheReadTokens = value
+	}
+	if value, ok := _c.mutation.CacheCreationTokens(); ok {
+		_spec.SetField(usageupstreamattempt.FieldCacheCreationTokens, field.TypeInt64, value)
+		_node.CacheCreationTokens = value
 	}
 	if value, ok := _c.mutation.CacheCreation5mTokens(); ok {
 		_spec.SetField(usageupstreamattempt.FieldCacheCreation5mTokens, field.TypeInt64, value)
@@ -994,6 +1024,24 @@ func (u *UsageUpstreamAttemptUpsert) UpdateCacheReadTokens() *UsageUpstreamAttem
 // AddCacheReadTokens adds v to the "cache_read_tokens" field.
 func (u *UsageUpstreamAttemptUpsert) AddCacheReadTokens(v int64) *UsageUpstreamAttemptUpsert {
 	u.Add(usageupstreamattempt.FieldCacheReadTokens, v)
+	return u
+}
+
+// SetCacheCreationTokens sets the "cache_creation_tokens" field.
+func (u *UsageUpstreamAttemptUpsert) SetCacheCreationTokens(v int64) *UsageUpstreamAttemptUpsert {
+	u.Set(usageupstreamattempt.FieldCacheCreationTokens, v)
+	return u
+}
+
+// UpdateCacheCreationTokens sets the "cache_creation_tokens" field to the value that was provided on create.
+func (u *UsageUpstreamAttemptUpsert) UpdateCacheCreationTokens() *UsageUpstreamAttemptUpsert {
+	u.SetExcluded(usageupstreamattempt.FieldCacheCreationTokens)
+	return u
+}
+
+// AddCacheCreationTokens adds v to the "cache_creation_tokens" field.
+func (u *UsageUpstreamAttemptUpsert) AddCacheCreationTokens(v int64) *UsageUpstreamAttemptUpsert {
+	u.Add(usageupstreamattempt.FieldCacheCreationTokens, v)
 	return u
 }
 
@@ -1626,6 +1674,27 @@ func (u *UsageUpstreamAttemptUpsertOne) AddCacheReadTokens(v int64) *UsageUpstre
 func (u *UsageUpstreamAttemptUpsertOne) UpdateCacheReadTokens() *UsageUpstreamAttemptUpsertOne {
 	return u.Update(func(s *UsageUpstreamAttemptUpsert) {
 		s.UpdateCacheReadTokens()
+	})
+}
+
+// SetCacheCreationTokens sets the "cache_creation_tokens" field.
+func (u *UsageUpstreamAttemptUpsertOne) SetCacheCreationTokens(v int64) *UsageUpstreamAttemptUpsertOne {
+	return u.Update(func(s *UsageUpstreamAttemptUpsert) {
+		s.SetCacheCreationTokens(v)
+	})
+}
+
+// AddCacheCreationTokens adds v to the "cache_creation_tokens" field.
+func (u *UsageUpstreamAttemptUpsertOne) AddCacheCreationTokens(v int64) *UsageUpstreamAttemptUpsertOne {
+	return u.Update(func(s *UsageUpstreamAttemptUpsert) {
+		s.AddCacheCreationTokens(v)
+	})
+}
+
+// UpdateCacheCreationTokens sets the "cache_creation_tokens" field to the value that was provided on create.
+func (u *UsageUpstreamAttemptUpsertOne) UpdateCacheCreationTokens() *UsageUpstreamAttemptUpsertOne {
+	return u.Update(func(s *UsageUpstreamAttemptUpsert) {
+		s.UpdateCacheCreationTokens()
 	})
 }
 
@@ -2488,6 +2557,27 @@ func (u *UsageUpstreamAttemptUpsertBulk) AddCacheReadTokens(v int64) *UsageUpstr
 func (u *UsageUpstreamAttemptUpsertBulk) UpdateCacheReadTokens() *UsageUpstreamAttemptUpsertBulk {
 	return u.Update(func(s *UsageUpstreamAttemptUpsert) {
 		s.UpdateCacheReadTokens()
+	})
+}
+
+// SetCacheCreationTokens sets the "cache_creation_tokens" field.
+func (u *UsageUpstreamAttemptUpsertBulk) SetCacheCreationTokens(v int64) *UsageUpstreamAttemptUpsertBulk {
+	return u.Update(func(s *UsageUpstreamAttemptUpsert) {
+		s.SetCacheCreationTokens(v)
+	})
+}
+
+// AddCacheCreationTokens adds v to the "cache_creation_tokens" field.
+func (u *UsageUpstreamAttemptUpsertBulk) AddCacheCreationTokens(v int64) *UsageUpstreamAttemptUpsertBulk {
+	return u.Update(func(s *UsageUpstreamAttemptUpsert) {
+		s.AddCacheCreationTokens(v)
+	})
+}
+
+// UpdateCacheCreationTokens sets the "cache_creation_tokens" field to the value that was provided on create.
+func (u *UsageUpstreamAttemptUpsertBulk) UpdateCacheCreationTokens() *UsageUpstreamAttemptUpsertBulk {
+	return u.Update(func(s *UsageUpstreamAttemptUpsert) {
+		s.UpdateCacheCreationTokens()
 	})
 }
 

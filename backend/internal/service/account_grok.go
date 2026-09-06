@@ -31,7 +31,18 @@ func (a *Account) IsGrokOAuth() bool {
 }
 
 func (a *Account) IsOpenAICompatible() bool {
-	return a != nil && (a.Platform == PlatformOpenAI || a.Platform == PlatformGrok)
+	return a != nil && (a.Platform == PlatformOpenAI || a.Platform == PlatformGrok ||
+		isDomesticOpenAICompatiblePlatform(a.Platform))
+}
+
+func isDomesticOpenAICompatiblePlatform(platform string) bool {
+	return platform == PlatformKimi || platform == PlatformZhipu || platform == PlatformDeepSeek
+}
+
+// IsOpenAICompatibleAPIKey identifies API-key accounts that can use the
+// OpenAI-compatible gateway paths (Chat Completions and Responses fallback).
+func (a *Account) IsOpenAICompatibleAPIKey() bool {
+	return a != nil && a.Type == AccountTypeAPIKey && a.IsOpenAICompatible()
 }
 
 func (a *Account) GetGrokBaseURL() string {
@@ -101,10 +112,17 @@ func (a *Account) SupportsOpenAIEndpointCapability(capability OpenAIEndpointCapa
 	switch capability {
 	case OpenAIEndpointCapabilityChatCompletions:
 	case OpenAIEndpointCapabilityResponses:
-		if a.Type == AccountTypeAPIKey && !openai_compat.ShouldUseResponsesAPI(a.Extra) {
-			return false
+		// Domestic OpenAI-compatible API-key providers commonly expose only
+		// /v1/chat/completions. The gateway transparently converts Responses
+		// requests to that endpoint, so both capabilities are schedulable.
+		if isDomesticOpenAICompatiblePlatform(a.Platform) {
+			capability = OpenAIEndpointCapabilityChatCompletions
+		} else {
+			if a.Type == AccountTypeAPIKey && !openai_compat.ShouldUseResponsesAPI(a.Extra) {
+				return false
+			}
+			capability = OpenAIEndpointCapabilityChatCompletions
 		}
-		capability = OpenAIEndpointCapabilityChatCompletions
 	case OpenAIEndpointCapabilityAlphaSearch:
 		if a.Type != AccountTypeOAuth && a.Type != AccountTypeAPIKey {
 			return false

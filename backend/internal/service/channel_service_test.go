@@ -2494,3 +2494,44 @@ func TestUpdate_MappingConflict(t *testing.T) {
 	require.Error(t, err)
 	require.Contains(t, err.Error(), "MAPPING_PATTERN_CONFLICT")
 }
+
+func TestChannelPricingWritesBlockedWhenSalesPricingResolverDisabled(t *testing.T) {
+	settings := NewSettingService(&settingUpdateRepoStub{values: map[string]string{SettingKeySalesPricingResolverEnabled: "false"}}, nil)
+	svc := newTestChannelService(&mockChannelRepository{})
+	svc.SetSettingService(settings)
+
+	_, err := svc.Create(context.Background(), &CreateChannelInput{Name: "blocked", ModelPricing: []ChannelModelPricing{{Models: []string{"gpt-5"}}}})
+	require.ErrorIs(t, err, ErrSalesPricingResolverDisabled)
+
+	pricing := []ChannelModelPricing{{Models: []string{"gpt-5"}}}
+	_, err = svc.Update(context.Background(), 1, &UpdateChannelInput{ModelPricing: &pricing})
+	require.ErrorIs(t, err, ErrSalesPricingResolverDisabled)
+
+	apply := false
+	rules := []AccountStatsPricingRule{}
+	_, err = svc.Update(context.Background(), 1, &UpdateChannelInput{ApplyPricingToAccountStats: &apply, AccountStatsPricingRules: &rules})
+	require.ErrorIs(t, err, ErrSalesPricingResolverDisabled)
+}
+
+func TestChannelNonPricingUpdateAllowedWhenSalesPricingResolverDisabled(t *testing.T) {
+	settings := NewSettingService(&settingUpdateRepoStub{values: map[string]string{SettingKeySalesPricingResolverEnabled: "false"}}, nil)
+	channel := &Channel{ID: 1, Name: "existing", Status: StatusActive}
+	repo := &mockChannelRepository{getByIDFn: func(context.Context, int64) (*Channel, error) { return channel, nil }}
+	svc := newTestChannelService(repo)
+	svc.SetSettingService(settings)
+	description := "updated"
+
+	_, err := svc.Update(context.Background(), 1, &UpdateChannelInput{Description: &description})
+	require.NoError(t, err)
+	require.Equal(t, description, channel.Description)
+}
+
+func TestChannelDeleteBlockedWhenSalesPricingResolverDisabled(t *testing.T) {
+	settings := NewSettingService(&settingUpdateRepoStub{values: map[string]string{SettingKeySalesPricingResolverEnabled: "false"}}, nil)
+	repo := &mockChannelRepository{}
+	svc := newTestChannelService(repo)
+	svc.SetSettingService(settings)
+
+	err := svc.Delete(context.Background(), 1)
+	require.ErrorIs(t, err, ErrSalesPricingResolverDisabled)
+}

@@ -3,6 +3,7 @@
 package repository
 
 import (
+	"context"
 	"errors"
 	"testing"
 	"time"
@@ -39,6 +40,24 @@ func (s *GatewayCacheSuite) TestSetAndGetSessionAccountID() {
 	sid, err := s.cache.GetSessionAccountID(s.ctx, groupID, sessionID)
 	require.NoError(s.T(), err, "GetSessionAccountID")
 	require.Equal(s.T(), accountID, sid, "session id mismatch")
+}
+
+func (s *GatewayCacheSuite) TestClaimSessionAccountID_PreservesFirstBinding() {
+	groupID := int64(1)
+	sessionID := "claim-session"
+	firstID, claimed, err := s.cache.(interface {
+		ClaimSessionAccountID(context.Context, int64, string, int64, time.Duration) (int64, bool, error)
+	}).ClaimSessionAccountID(s.ctx, groupID, sessionID, 99, time.Minute)
+	require.NoError(s.T(), err)
+	require.True(s.T(), claimed)
+	require.Equal(s.T(), int64(99), firstID)
+
+	secondID, claimed, err := s.cache.(interface {
+		ClaimSessionAccountID(context.Context, int64, string, int64, time.Duration) (int64, bool, error)
+	}).ClaimSessionAccountID(s.ctx, groupID, sessionID, 100, time.Minute)
+	require.NoError(s.T(), err)
+	require.False(s.T(), claimed)
+	require.Equal(s.T(), int64(99), secondID)
 }
 
 func (s *GatewayCacheSuite) TestSessionAccountID_TTL() {

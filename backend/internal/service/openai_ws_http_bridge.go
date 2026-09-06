@@ -258,6 +258,21 @@ func (s *OpenAIGatewayService) proxyOpenAIWSHTTPBridgeTurn(
 					ClientMessage:   upstreamMsg,
 				}
 			}
+		} else if IsOpenAITeamWorkspaceDeactivated(resp.StatusCode, respBody) {
+			// The HTTP bridge returns an UpstreamFailoverError before the ordinary
+			// error branch below. Persist the Team breaker first, otherwise a
+			// Responses WebSocket request can silently retry without pausing the
+			// other OAuth accounts in the same ChatGPT workspace.
+			canonicalModel := canonicalOpenAIAccountSchedulingModel(account, originalModel)
+			s.handleOpenAIAccountUpstreamError(ctx, account, resp.StatusCode, resp.Header, respBody, canonicalModel)
+			if shouldFailover {
+				return nil, &UpstreamFailoverError{
+					StatusCode:      resp.StatusCode,
+					ResponseHeaders: cloneHeader(resp.Header),
+					ResponseBody:    append([]byte(nil), respBody...),
+					ClientMessage:   upstreamMsg,
+				}
+			}
 		} else if turn == 1 && shouldFailover {
 			return nil, &UpstreamFailoverError{
 				StatusCode:      resp.StatusCode,

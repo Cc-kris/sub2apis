@@ -16,7 +16,7 @@ export default defineConfig({
   ],
   use: {
     baseURL,
-    trace: 'retain-on-failure',
+    trace: process.env.E2E_UI_TRACE === '1' ? 'on' : 'retain-on-failure',
     screenshot: 'only-on-failure',
     video: 'retain-on-failure',
     locale: 'zh-CN',
@@ -36,12 +36,20 @@ export default defineConfig({
       use: { ...devices['Desktop Chrome'] }
     },
     {
+      name: 'tablet-chrome',
+      use: { ...devices['Desktop Chrome'], viewport: { width: 1024, height: 768 }, isMobile: false }
+    },
+    {
       name: 'mobile-chrome',
       use: { ...devices['Pixel 7'] }
     },
     {
-      name: 'firefox',
-      use: { ...devices['Desktop Firefox'] }
+      name: 'webkit-desktop',
+      use: { ...devices['Desktop Safari'] }
+    },
+    {
+      name: 'webkit-mobile',
+      use: { ...devices['iPhone 13'], browserName: 'webkit' }
     }
   ]
 })

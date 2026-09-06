@@ -3,11 +3,31 @@ package service
 import (
 	"fmt"
 	"net/http"
+	"net/http/httptest"
+	"strings"
 	"testing"
 	"time"
 
 	"github.com/stretchr/testify/require"
 )
+
+func TestCoderOpenAIWSClientDialer_CapturesHandshakeErrorBody(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("X-Request-ID", "req-team-402")
+		w.WriteHeader(http.StatusPaymentRequired)
+		_, _ = w.Write([]byte(`{"detail":{"code":"deactivated_workspace"}}`))
+	}))
+	defer server.Close()
+
+	dialer := newDefaultOpenAIWSClientDialer().(*coderOpenAIWSClientDialer)
+	_, status, headers, err := dialer.Dial(t.Context(), "ws"+strings.TrimPrefix(server.URL, "http"), nil, "")
+	require.Error(t, err)
+	require.Equal(t, http.StatusPaymentRequired, status)
+	require.Equal(t, "req-team-402", headers.Get("X-Request-ID"))
+	var dialErr *openAIWSDialError
+	require.ErrorAs(t, err, &dialErr)
+	require.Equal(t, []byte(`{"detail":{"code":"deactivated_workspace"}}`), dialErr.ResponseBody)
+}
 
 func TestCoderOpenAIWSClientDialer_ProxyHTTPClientReuse(t *testing.T) {
 	dialer := newDefaultOpenAIWSClientDialer()

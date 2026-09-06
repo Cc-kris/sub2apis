@@ -18,6 +18,8 @@ type SystemSettings struct {
 	RegistrationEnabled              bool
 	EmailVerifyEnabled               bool
 	RegistrationEmailSuffixWhitelist []string
+	RegistrationDomainLimitEnabled   bool
+	RegistrationDomainLimitPerDomain int
 	PromoCodeEnabled                 bool
 	PasswordResetEnabled             bool
 	FrontendURL                      string
@@ -187,14 +189,21 @@ type SystemSettings struct {
 	ChannelMonitorDefaultIntervalSeconds int  `json:"channel_monitor_default_interval_seconds"`
 
 	// Available Channels feature (user-facing aggregate view)
-	AvailableChannelsEnabled bool `json:"available_channels_enabled"`
-	ModelSquareEnabled       bool `json:"model_square_enabled"`
+	AvailableChannelsEnabled               bool  `json:"available_channels_enabled"`
+	ModelSquareEnabled                     bool  `json:"model_square_enabled"`
+	OpenAIRemoteCompactionV2Enabled        bool  `json:"openai_remote_compaction_v2_enabled"`
+	GroupUsageRollupEnabled                bool  `json:"group_usage_rollup_enabled"`
+	SalesPricingResolverEnabled            bool  `json:"sales_pricing_resolver_enabled"`
+	OpenAITeamLinkedResolverEnabled        bool  `json:"openai_team_linked_resolver_enabled"`
+	CurrentSalesPricingResolverEnabled     *bool `json:"-"`
+	CurrentOpenAITeamLinkedResolverEnabled *bool `json:"-"`
 
-	SalesPricingVersion         SalesPricingVersion `json:"sales_pricing_version"`
-	CurrentSalesPricingVersion  SalesPricingVersion `json:"-"`
-	SalesPricingShadowStartedAt *time.Time          `json:"sales_pricing_shadow_started_at"`
-	SalesPricingV2EnabledAt     *time.Time          `json:"sales_pricing_v2_enabled_at"`
-	SalesPricingChangeReason    string              `json:"-"`
+	SalesPricingVersion          SalesPricingVersion `json:"sales_pricing_version"`
+	CurrentSalesPricingVersion   SalesPricingVersion `json:"-"`
+	SalesPricingShadowStartedAt  *time.Time          `json:"sales_pricing_shadow_started_at"`
+	SalesPricingV2EnabledAt      *time.Time          `json:"sales_pricing_v2_enabled_at"`
+	SalesPricingChangeReason     string              `json:"-"`
+	OpenAITeamLinkedChangeReason string              `json:"-"`
 
 	// Claude Code version check
 	MinClaudeCodeVersion string
@@ -255,6 +264,8 @@ type PublicSettings struct {
 	EmailVerifyEnabled               bool
 	ForceEmailOnThirdPartySignup     bool
 	RegistrationEmailSuffixWhitelist []string
+	RegistrationDomainLimitEnabled   bool
+	RegistrationDomainLimitPerDomain int
 	PromoCodeEnabled                 bool
 	PasswordResetEnabled             bool
 	InvitationCodeEnabled            bool

@@ -241,7 +241,6 @@ func TestForwardAsAnthropic_MappedClaudeModelAcceptsChatUsageShape(t *testing.T)
 }
 
 func TestForwardAsAnthropic_InjectsPromptCacheKeyForAPIKeyMessagesDispatch(t *testing.T) {
-	t.Parallel()
 	gin.SetMode(gin.TestMode)
 
 	rec := httptest.NewRecorder()
@@ -287,7 +286,6 @@ func TestForwardAsAnthropic_InjectsPromptCacheKeyForAPIKeyMessagesDispatch(t *te
 }
 
 func TestForwardAsAnthropic_AutoDerivesPromptCacheKeyWhenMessagesDispatchHasNoSessionID(t *testing.T) {
-	t.Parallel()
 	gin.SetMode(gin.TestMode)
 
 	rec := httptest.NewRecorder()
@@ -1700,7 +1698,7 @@ func TestForwardAsAnthropic_DoneSentinelWithoutTerminalReturnsError(t *testing.T
 	require.Zero(t, result.Usage.OutputTokens)
 }
 
-func TestForwardAsAnthropic_UpstreamRequestIgnoresClientCancel(t *testing.T) {
+func TestForwardAsAnthropic_UpstreamRequestCancelsBeforeResponseStarts(t *testing.T) {
 	gin.SetMode(gin.TestMode)
 
 	rec := httptest.NewRecorder()
@@ -1740,5 +1738,5 @@ func TestForwardAsAnthropic_UpstreamRequestIgnoresClientCancel(t *testing.T) {
 	require.NoError(t, err)
 	require.NotNil(t, result)
 	require.NotNil(t, upstream.lastReq)
-	require.NoError(t, upstream.lastReq.Context().Err())
+	require.ErrorIs(t, upstream.lastReq.Context().Err(), context.Canceled)
 }

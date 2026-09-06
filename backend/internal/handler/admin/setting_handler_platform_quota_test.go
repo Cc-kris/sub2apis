@@ -64,6 +64,24 @@ func TestDiffSettings_NoChangeWhenEqual(t *testing.T) {
 	}
 }
 
+func TestDiffSettings_DetectsRollbackSwitchChanges(t *testing.T) {
+	before := &service.SystemSettings{
+		OpenAIRemoteCompactionV2Enabled: true,
+		GroupUsageRollupEnabled:         true,
+		SalesPricingResolverEnabled:     true,
+	}
+	after := &service.SystemSettings{
+		OpenAIRemoteCompactionV2Enabled: false,
+		GroupUsageRollupEnabled:         false,
+		SalesPricingResolverEnabled:     false,
+	}
+
+	changed := diffSettings(before, after, nil, nil, UpdateSettingsRequest{})
+	require.Contains(t, changed, "openai_remote_compaction_v2_enabled")
+	require.Contains(t, changed, "group_usage_rollup_enabled")
+	require.Contains(t, changed, "sales_pricing_resolver_enabled")
+}
+
 func TestEqualNullableFloat(t *testing.T) {
 	five := 5.0
 	five2 := 5.0

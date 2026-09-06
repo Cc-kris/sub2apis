@@ -264,6 +264,7 @@ func (h *OpsHandler) GetErrorLogs(c *gin.Context) {
 	filter.Source = strings.TrimSpace(c.Query("error_source"))
 	filter.Query = strings.TrimSpace(c.Query("q"))
 	filter.UserQuery = strings.TrimSpace(c.Query("user_query"))
+	filter.Model = strings.TrimSpace(c.Query("model"))
 	if !applyOpsErrorExtraFilters(c, filter) {
 		return
 	}
@@ -292,6 +293,14 @@ func (h *OpsHandler) GetErrorLogs(c *gin.Context) {
 			return
 		}
 		filter.AccountID = &id
+	}
+	if v := strings.TrimSpace(c.Query("user_id")); v != "" {
+		id, err := strconv.ParseInt(v, 10, 64)
+		if err != nil || id <= 0 {
+			response.BadRequest(c, "Invalid user_id")
+			return
+		}
+		filter.UserID = &id
 	}
 
 	if v := strings.TrimSpace(c.Query("resolved")); v != "" {

@@ -1,6 +1,12 @@
 <template>
   <div class="flex items-center gap-2">
     <span class="text-sm text-gray-900 dark:text-gray-100">{{ row.primary_model }}</span>
+    <span
+      v-if="row.mode === 'quota'"
+      class="inline-flex items-center rounded-full bg-slate-100 px-2 py-0.5 text-[11px] font-medium text-slate-600 dark:bg-dark-700 dark:text-slate-300"
+    >
+      {{ quotaStateLabel(row.quota_snapshot?.state) }}
+    </span>
     <HelpTooltip>
       <template #trigger>
         <span
@@ -68,4 +74,10 @@ defineProps<{
 
 const { t } = useI18n()
 const { statusLabel, statusBadgeClass, formatLatency } = useChannelMonitorFormat()
+
+function quotaStateLabel(state?: string | null): string {
+  const key = `monitorCommon.quotaState.${state || 'unknown'}`
+  const translated = t(key)
+  return translated === key ? t('monitorCommon.quotaState.unknown') : translated
+}
 </script>

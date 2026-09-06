@@ -551,6 +551,26 @@ func (_c *GroupCreate) SetNillableRpmLimit(v *int) *GroupCreate {
 	return _c
 }
 
+// SetLongContextPricingEnabled sets the "long_context_pricing_enabled" field.
+func (_c *GroupCreate) SetLongContextPricingEnabled(v bool) *GroupCreate {
+	_c.mutation.SetLongContextPricingEnabled(v)
+	return _c
+}
+
+// SetNillableLongContextPricingEnabled sets the "long_context_pricing_enabled" field if the given value is not nil.
+func (_c *GroupCreate) SetNillableLongContextPricingEnabled(v *bool) *GroupCreate {
+	if v != nil {
+		_c.SetLongContextPricingEnabled(*v)
+	}
+	return _c
+}
+
+// SetModelPricing sets the "model_pricing" field.
+func (_c *GroupCreate) SetModelPricing(v map[string]interface{}) *GroupCreate {
+	_c.mutation.SetModelPricing(v)
+	return _c
+}
+
 // AddAPIKeyIDs adds the "api_keys" edge to the APIKey entity by IDs.
 func (_c *GroupCreate) AddAPIKeyIDs(ids ...int64) *GroupCreate {
 	_c.mutation.AddAPIKeyIDs(ids...)
@@ -780,6 +800,14 @@ func (_c *GroupCreate) defaults() error {
 		v := group.DefaultRpmLimit
 		_c.mutation.SetRpmLimit(v)
 	}
+	if _, ok := _c.mutation.LongContextPricingEnabled(); !ok {
+		v := group.DefaultLongContextPricingEnabled
+		_c.mutation.SetLongContextPricingEnabled(v)
+	}
+	if _, ok := _c.mutation.ModelPricing(); !ok {
+		v := group.DefaultModelPricing
+		_c.mutation.SetModelPricing(v)
+	}
 	return nil
 }
 
@@ -884,6 +912,12 @@ func (_c *GroupCreate) check() error {
 	}
 	if _, ok := _c.mutation.RpmLimit(); !ok {
 		return &ValidationError{Name: "rpm_limit", err: errors.New(`ent: missing required field "Group.rpm_limit"`)}
+	}
+	if _, ok := _c.mutation.LongContextPricingEnabled(); !ok {
+		return &ValidationError{Name: "long_context_pricing_enabled", err: errors.New(`ent: missing required field "Group.long_context_pricing_enabled"`)}
+	}
+	if _, ok := _c.mutation.ModelPricing(); !ok {
+		return &ValidationError{Name: "model_pricing", err: errors.New(`ent: missing required field "Group.model_pricing"`)}
 	}
 	return nil
 }
@@ -1067,6 +1101,14 @@ func (_c *GroupCreate) createSpec() (*Group, *sqlgraph.CreateSpec) {
 	if value, ok := _c.mutation.RpmLimit(); ok {
 		_spec.SetField(group.FieldRpmLimit, field.TypeInt, value)
 		_node.RpmLimit = value
+	}
+	if value, ok := _c.mutation.LongContextPricingEnabled(); ok {
+		_spec.SetField(group.FieldLongContextPricingEnabled, field.TypeBool, value)
+		_node.LongContextPricingEnabled = value
+	}
+	if value, ok := _c.mutation.ModelPricing(); ok {
+		_spec.SetField(group.FieldModelPricing, field.TypeJSON, value)
+		_node.ModelPricing = value
 	}
 	if nodes := _c.mutation.APIKeysIDs(); len(nodes) > 0 {
 		edge := &sqlgraph.EdgeSpec{
@@ -1866,6 +1908,30 @@ func (u *GroupUpsert) AddRpmLimit(v int) *GroupUpsert {
 	return u
 }
 
+// SetLongContextPricingEnabled sets the "long_context_pricing_enabled" field.
+func (u *GroupUpsert) SetLongContextPricingEnabled(v bool) *GroupUpsert {
+	u.Set(group.FieldLongContextPricingEnabled, v)
+	return u
+}
+
+// UpdateLongContextPricingEnabled sets the "long_context_pricing_enabled" field to the value that was provided on create.
+func (u *GroupUpsert) UpdateLongContextPricingEnabled() *GroupUpsert {
+	u.SetExcluded(group.FieldLongContextPricingEnabled)
+	return u
+}
+
+// SetModelPricing sets the "model_pricing" field.
+func (u *GroupUpsert) SetModelPricing(v map[string]interface{}) *GroupUpsert {
+	u.Set(group.FieldModelPricing, v)
+	return u
+}
+
+// UpdateModelPricing sets the "model_pricing" field to the value that was provided on create.
+func (u *GroupUpsert) UpdateModelPricing() *GroupUpsert {
+	u.SetExcluded(group.FieldModelPricing)
+	return u
+}
+
 // UpdateNewValues updates the mutable fields using the new values that were set on create.
 // Using this option is equivalent to using:
 //
@@ -2657,6 +2723,34 @@ func (u *GroupUpsertOne) AddRpmLimit(v int) *GroupUpsertOne {
 func (u *GroupUpsertOne) UpdateRpmLimit() *GroupUpsertOne {
 	return u.Update(func(s *GroupUpsert) {
 		s.UpdateRpmLimit()
+	})
+}
+
+// SetLongContextPricingEnabled sets the "long_context_pricing_enabled" field.
+func (u *GroupUpsertOne) SetLongContextPricingEnabled(v bool) *GroupUpsertOne {
+	return u.Update(func(s *GroupUpsert) {
+		s.SetLongContextPricingEnabled(v)
+	})
+}
+
+// UpdateLongContextPricingEnabled sets the "long_context_pricing_enabled" field to the value that was provided on create.
+func (u *GroupUpsertOne) UpdateLongContextPricingEnabled() *GroupUpsertOne {
+	return u.Update(func(s *GroupUpsert) {
+		s.UpdateLongContextPricingEnabled()
+	})
+}
+
+// SetModelPricing sets the "model_pricing" field.
+func (u *GroupUpsertOne) SetModelPricing(v map[string]interface{}) *GroupUpsertOne {
+	return u.Update(func(s *GroupUpsert) {
+		s.SetModelPricing(v)
+	})
+}
+
+// UpdateModelPricing sets the "model_pricing" field to the value that was provided on create.
+func (u *GroupUpsertOne) UpdateModelPricing() *GroupUpsertOne {
+	return u.Update(func(s *GroupUpsert) {
+		s.UpdateModelPricing()
 	})
 }
 
@@ -3617,6 +3711,34 @@ func (u *GroupUpsertBulk) AddRpmLimit(v int) *GroupUpsertBulk {
 func (u *GroupUpsertBulk) UpdateRpmLimit() *GroupUpsertBulk {
 	return u.Update(func(s *GroupUpsert) {
 		s.UpdateRpmLimit()
+	})
+}
+
+// SetLongContextPricingEnabled sets the "long_context_pricing_enabled" field.
+func (u *GroupUpsertBulk) SetLongContextPricingEnabled(v bool) *GroupUpsertBulk {
+	return u.Update(func(s *GroupUpsert) {
+		s.SetLongContextPricingEnabled(v)
+	})
+}
+
+// UpdateLongContextPricingEnabled sets the "long_context_pricing_enabled" field to the value that was provided on create.
+func (u *GroupUpsertBulk) UpdateLongContextPricingEnabled() *GroupUpsertBulk {
+	return u.Update(func(s *GroupUpsert) {
+		s.UpdateLongContextPricingEnabled()
+	})
+}
+
+// SetModelPricing sets the "model_pricing" field.
+func (u *GroupUpsertBulk) SetModelPricing(v map[string]interface{}) *GroupUpsertBulk {
+	return u.Update(func(s *GroupUpsert) {
+		s.SetModelPricing(v)
+	})
+}
+
+// UpdateModelPricing sets the "model_pricing" field to the value that was provided on create.
+func (u *GroupUpsertBulk) UpdateModelPricing() *GroupUpsertBulk {
+	return u.Update(func(s *GroupUpsert) {
+		s.UpdateModelPricing()
 	})
 }
 

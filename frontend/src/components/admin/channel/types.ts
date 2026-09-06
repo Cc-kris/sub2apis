@@ -1,4 +1,4 @@
-import type { BillingMode, PricingInterval } from '@/api/admin/channels'
+import type { BillingMode, PricingInterval, TimePricingConfig } from '@/api/admin/channels'
 
 export interface IntervalFormEntry {
   min_tokens: number
@@ -21,7 +21,10 @@ export interface PricingFormEntry {
   cache_read_price: number | string | null
   image_output_price: number | string | null
   per_request_price: number | string | null
-  intervals: IntervalFormEntry[]
+	intervals: IntervalFormEntry[]
+	time_pricing?: TimePricingConfig | null
+	fast_multiplier?: number | string | null
+	flex_multiplier?: number | string | null
 }
 
 // 价格转换：后端存 per-token，前端显示 per-MTok ($/1M tokens)

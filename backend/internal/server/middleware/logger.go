@@ -47,6 +47,22 @@ func Logger() gin.HandlerFunc {
 			zap.String("method", method),
 			zap.String("path", path),
 		}
+		// Gateway handlers record stage timings in the Gin context. Include them
+		// in the normal access log as well as error diagnostics so successful slow
+		// requests can be attributed to auth, routing/queue, upstream, or response
+		// handling without reconstructing the request from a separate table.
+		appendLatencyField := func(contextKey, logField string) {
+			if value, ok := c.Get(contextKey); ok {
+				if latencyMs, ok := value.(int64); ok && latencyMs >= 0 {
+					fields = append(fields, zap.Int64(logField, latencyMs))
+				}
+			}
+		}
+		appendLatencyField("ops_auth_latency_ms", "auth_latency_ms")
+		appendLatencyField("ops_routing_latency_ms", "routing_latency_ms")
+		appendLatencyField("ops_upstream_latency_ms", "upstream_latency_ms")
+		appendLatencyField("ops_response_latency_ms", "response_latency_ms")
+		appendLatencyField("ops_time_to_first_token_ms", "time_to_first_token_ms")
 		if hasAccountID && accountID > 0 {
 			fields = append(fields, zap.Int64("account_id", accountID))
 		}

@@ -23,6 +23,7 @@ async function mockAuthenticatedModelSquare(page: Page) {
   await page.addInitScript((savedUser) => {
     localStorage.setItem('auth_token', 'e2e-token')
     localStorage.setItem('auth_user', JSON.stringify(savedUser))
+    localStorage.setItem('sub2api_locale', 'zh')
     localStorage.setItem('user_guide_42_user_v4_interactive', 'true')
     ;(window as any).__APP_CONFIG__ = {
       site_name: 'CCAI',
@@ -141,7 +142,7 @@ test.describe('Model Square', () => {
     await mockAuthenticatedModelSquare(page)
   })
 
-  test('browses groups, prices, billing details and Fast details', async ({ page, isMobile }) => {
+  test('browses groups, prices, billing details and Fast details', async ({ page, isMobile }, testInfo) => {
     test.skip(Boolean(isMobile), 'Desktop group list workflow')
     await page.goto('/model-square')
 
@@ -164,9 +165,10 @@ test.describe('Model Square', () => {
     await page.getByRole('option', { name: /Anthropic 公开组/ }).click()
     await expect(page).toHaveURL(/group_id=20/)
     await expect(list.getByText('claude-sonnet-4-6', { exact: true })).toBeVisible()
+    await testInfo.attach('model-square-desktop', { body: await page.screenshot(), contentType: 'image/png' })
   })
 
-  test('debounces search and has no serious accessibility violations', async ({ page, isMobile }) => {
+  test('debounces search and has no serious accessibility violations', async ({ page, isMobile }, testInfo) => {
     await page.goto('/model-square?group_id=10')
     const search = page.getByRole('searchbox', { name: '搜索当前分组的模型' })
     await search.fill('image')
@@ -179,9 +181,10 @@ test.describe('Model Square', () => {
       .analyze()
     const blocking = results.violations.filter((violation) => ['critical', 'serious'].includes(violation.impact || ''))
     expect(blocking).toEqual([])
+    await testInfo.attach('model-square-search', { body: await page.screenshot(), contentType: 'image/png' })
   })
 
-  test('uses the mobile group drawer', async ({ page, isMobile }) => {
+  test('uses the mobile group drawer', async ({ page, isMobile }, testInfo) => {
     test.skip(!isMobile, 'Mobile group drawer workflow')
     await page.goto('/model-square?group_id=10')
     await page.getByRole('button', { name: /OpenAI 标准组/ }).click()
@@ -189,5 +192,6 @@ test.describe('Model Square', () => {
     await page.getByRole('dialog').getByRole('button', { name: /Anthropic 公开组/ }).click()
     await expect(page).toHaveURL(/group_id=20/)
     await expect(page.getByTestId('model-square-mobile-list').getByText('claude-sonnet-4-6', { exact: true })).toBeVisible()
+    await testInfo.attach('model-square-mobile', { body: await page.screenshot(), contentType: 'image/png' })
   })
 })

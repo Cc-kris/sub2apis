@@ -391,6 +391,10 @@
       </div>
     </template>
 
+    <template v-else-if="account.platform === 'ollama'">
+      <OllamaCloudUsageCell :account="account" :usage="usageInfo" :loading="loading" :error="error" />
+    </template>
+
     <!-- Gemini platform: show quota + local usage window -->
     <template v-else-if="account.platform === 'gemini'">
       <!-- Auth Type + Tier Badge (first line) -->
@@ -586,6 +590,7 @@ import { enqueueUsageRequest } from '@/utils/usageLoadQueue'
 import { formatCompactNumber, formatRelativeTime } from '@/utils/format'
 import UsageProgressBar from './UsageProgressBar.vue'
 import AccountQuotaInfo from './AccountQuotaInfo.vue'
+import OllamaCloudUsageCell from './OllamaCloudUsageCell.vue'
 import GrokQuotaProbeCell from './GrokQuotaProbeCell.vue'
 
 // Module-level cache shared across all AccountUsageCell instances
@@ -632,23 +637,26 @@ let visibilityObserver: IntersectionObserver | null = null
 const showUsageWindows = computed(() => {
   // Gemini: we can always compute local usage windows from DB logs (simulated quotas).
   if (props.account.platform === 'gemini') return true
+  if (props.account.platform === 'ollama') return true
   return props.account.type === 'oauth' || props.account.type === 'setup-token'
 })
 
 const shouldFetchUsage = computed(() => {
-  if (props.account.platform === 'anthropic') {
+  const platform = String(props.account.platform)
+  if (platform === 'anthropic') {
     return props.account.type === 'oauth' || props.account.type === 'setup-token'
   }
-  if (props.account.platform === 'gemini') {
+  if (platform === 'gemini') {
     return true
   }
-	if (props.account.platform === 'antigravity') {
+	if (platform === 'antigravity') {
     return props.account.type === 'oauth'
 	}
-	if (props.account.platform === 'grok') {
+  if (platform === 'grok') {
 		return props.account.type === 'oauth'
 	}
-  if (props.account.platform === 'openai') {
+	if (platform === 'ollama') return true
+  if (platform === 'openai') {
     return props.account.type === 'oauth'
   }
   return false

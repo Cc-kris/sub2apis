@@ -72,6 +72,15 @@ type AccountTestService struct {
 	httpUpstream              HTTPUpstream
 	cfg                       *config.Config
 	tlsFPProfileService       *TLSFingerprintProfileService
+	settingService            *SettingService
+}
+
+// SetSettingService wires optional runtime settings without expanding the
+// account-test constructor used by existing tests.
+func (s *AccountTestService) SetSettingService(settingService *SettingService) {
+	if s != nil {
+		s.settingService = settingService
+	}
 }
 
 // NewAccountTestService creates a new AccountTestService
@@ -193,7 +202,7 @@ func (s *AccountTestService) TestAccountConnection(c *gin.Context, accountID int
 	}
 
 	// Route to platform-specific test method
-	if account.IsOpenAI() {
+	if account.IsOpenAI() || account.IsOpenAICompatibleAPIKey() {
 		return s.testOpenAIAccountConnection(c, account, modelID, prompt, normalizeAccountTestMode(mode))
 	}
 
@@ -563,7 +572,24 @@ func (s *AccountTestService) testOpenAIAccountConnection(c *gin.Context, account
 			return s.sendErrorAndEnd(c, "No API key available")
 		}
 
-		baseURL := account.GetOpenAIBaseURL()
+		probeProtocol := account.GetOpenAIAPIProtocol()
+		if probeProtocol == OpenAIAPIProtocolResponses && account.Platform != PlatformDeepSeek {
+			// Kimi/Zhipu Responses ingress is a controlled bridge to the
+			// configured native Chat endpoint.
+			probeProtocol = OpenAIAPIProtocolChat
+		}
+		if probeProtocol == OpenAIAPIProtocolAdaptive {
+			if account.UsesNativeResponsesForDomesticProvider() {
+				probeProtocol = OpenAIAPIProtocolResponses
+			} else if !account.IsOpenAICompatible() && openai_compat.ShouldUseResponsesAPI(account.Extra) {
+				probeProtocol = OpenAIAPIProtocolResponses
+			} else if account.Platform == PlatformOpenAI && openai_compat.ShouldUseResponsesAPI(account.Extra) {
+				probeProtocol = OpenAIAPIProtocolResponses
+			} else {
+				probeProtocol = OpenAIAPIProtocolChat
+			}
+		}
+		baseURL := account.GetOpenAIBaseURLForProtocol(probeProtocol)
 		if baseURL == "" {
 			baseURL = "https://api.openai.com"
 		}
@@ -571,7 +597,10 @@ func (s *AccountTestService) testOpenAIAccountConnection(c *gin.Context, account
 		if err != nil {
 			return s.sendErrorAndEnd(c, fmt.Sprintf("Invalid base URL: %s", err.Error()))
 		}
-		if !openai_compat.ShouldUseResponsesAPI(account.Extra) {
+		if probeProtocol == OpenAIAPIProtocolAnthropic {
+			return s.testOpenAIAnthropicMessagesConnection(c, account, testModelID, normalizedBaseURL, authToken)
+		}
+		if probeProtocol == OpenAIAPIProtocolChat {
 			return s.testOpenAIChatCompletionsConnection(c, account, testModelID, prompt, normalizedBaseURL, authToken)
 		}
 		apiURL = buildOpenAIResponsesURL(normalizedBaseURL)
@@ -804,6 +833,51 @@ func (s *AccountTestService) testOpenAIChatCompletionsConnection(
 	return s.processOpenAIChatCompletionsStream(c, resp.Body)
 }
 
+// testOpenAIAnthropicMessagesConnection probes the endpoint selected by the
+// account's anthropic protocol configuration instead of silently testing Chat.
+func (s *AccountTestService) testOpenAIAnthropicMessagesConnection(c *gin.Context, account *Account, testModelID, normalizedBaseURL, authToken string) error {
+	ctx := c.Request.Context()
+	payload, err := createTestPayload(testModelID)
+	if err != nil {
+		return s.sendErrorAndEnd(c, "Failed to create Anthropic test payload")
+	}
+	payloadBytes, err := json.Marshal(payload)
+	if err != nil {
+		return s.sendErrorAndEnd(c, "Failed to encode Anthropic test payload")
+	}
+	apiURL := buildOpenAIEndpointURL(normalizedBaseURL, "/v1/messages")
+	c.Writer.Header().Set("Content-Type", "text/event-stream")
+	c.Writer.Header().Set("Cache-Control", "no-cache")
+	c.Writer.Header().Set("Connection", "keep-alive")
+	c.Writer.Header().Set("X-Accel-Buffering", "no")
+	c.Writer.Flush()
+	s.sendEvent(c, TestEvent{Type: "test_start", Model: testModelID})
+	s.sendEvent(c, TestEvent{Type: "status", Text: "正在通过 /v1/messages 测试连接"})
+	req, err := http.NewRequestWithContext(ctx, http.MethodPost, apiURL, bytes.NewReader(payloadBytes))
+	if err != nil {
+		return s.sendErrorAndEnd(c, "Failed to create Anthropic Messages request")
+	}
+	req = req.WithContext(WithHTTPUpstreamProfile(req.Context(), HTTPUpstreamProfileOpenAI))
+	req.Header.Set("Content-Type", "application/json")
+	req.Header.Set("Accept", "text/event-stream")
+	req.Header.Set("anthropic-version", "2023-06-01")
+	req.Header.Set("x-api-key", authToken)
+	proxyURL := ""
+	if account.ProxyID != nil && account.Proxy != nil {
+		proxyURL = account.Proxy.URL()
+	}
+	resp, err := s.httpUpstream.DoWithTLS(req, proxyURL, account.ID, account.Concurrency, s.tlsFPProfileService.ResolveTLSProfile(account))
+	if err != nil {
+		return s.sendErrorAndEnd(c, fmt.Sprintf("Anthropic Messages API request failed: %s", err.Error()))
+	}
+	defer func() { _ = resp.Body.Close() }()
+	if resp.StatusCode != http.StatusOK {
+		body, _ := io.ReadAll(resp.Body)
+		return s.sendErrorAndEnd(c, fmt.Sprintf("Anthropic Messages API returned %d: %s", resp.StatusCode, string(body)))
+	}
+	return s.processClaudeStream(c, resp.Body)
+}
+
 // testOpenAICompactConnection probes /responses/compact and persists the
 // resulting capability state on the account.
 func (s *AccountTestService) testOpenAICompactConnection(c *gin.Context, account *Account, testModelID string) error {
@@ -811,6 +885,7 @@ func (s *AccountTestService) testOpenAICompactConnection(c *gin.Context, account
 
 	authToken := ""
 	apiURL := ""
+	legacyCompactURL := ""
 	isOAuth := false
 	chatgptAccountID := ""
 
@@ -821,7 +896,8 @@ func (s *AccountTestService) testOpenAICompactConnection(c *gin.Context, account
 		if authToken == "" {
 			return s.sendErrorAndEnd(c, "No access token available")
 		}
-		apiURL = chatgptCodexAPIURL + "/compact"
+		apiURL = chatgptCodexAPIURL
+		legacyCompactURL = chatgptCodexAPIURL + "/compact"
 		chatgptAccountID = account.GetChatGPTAccountID()
 	case account.Type == AccountTypeAPIKey:
 		authToken = account.GetOpenAIApiKey()
@@ -836,7 +912,8 @@ func (s *AccountTestService) testOpenAICompactConnection(c *gin.Context, account
 		if err != nil {
 			return s.sendErrorAndEnd(c, fmt.Sprintf("Invalid base URL: %s", err.Error()))
 		}
-		apiURL = appendOpenAIResponsesRequestPathSuffix(buildOpenAIResponsesURL(normalizedBaseURL), "/compact")
+		apiURL = buildOpenAIResponsesURL(normalizedBaseURL)
+		legacyCompactURL = appendOpenAIResponsesRequestPathSuffix(apiURL, "/compact")
 	default:
 		return s.sendErrorAndEnd(c, fmt.Sprintf("Unsupported account type: %s", account.Type))
 	}
@@ -850,28 +927,39 @@ func (s *AccountTestService) testOpenAICompactConnection(c *gin.Context, account
 	payloadBytes, _ := json.Marshal(createOpenAICompactProbePayload(testModelID))
 	s.sendEvent(c, TestEvent{Type: "test_start", Model: testModelID})
 
-	req, err := http.NewRequestWithContext(ctx, "POST", apiURL, bytes.NewReader(payloadBytes))
+	newProbeRequest := func(target string) (*http.Request, error) {
+		req, err := http.NewRequestWithContext(ctx, "POST", target, bytes.NewReader(payloadBytes))
+		if err != nil {
+			return nil, err
+		}
+		req = req.WithContext(WithHTTPUpstreamProfile(req.Context(), HTTPUpstreamProfileOpenAI))
+		req.Header.Set("Content-Type", "application/json")
+		req.Header.Set("Accept", "application/json")
+		req.Header.Set("Authorization", "Bearer "+authToken)
+		req.Header.Set("OpenAI-Beta", "responses=experimental")
+		req.Header.Set("Originator", "codex_cli_rs")
+		req.Header.Set("User-Agent", codexCLIUserAgent)
+		req.Header.Set("Version", codexCLIVersion)
+		probeSessionID := compactProbeSessionID(account.ID)
+		req.Header.Set("Session_ID", probeSessionID)
+		req.Header.Set("Conversation_ID", probeSessionID)
+		if isOAuth {
+			req.Host = "chatgpt.com"
+			if chatgptAccountID != "" {
+				req.Header.Set("chatgpt-account-id", chatgptAccountID)
+			}
+		}
+		resolveOpenAIAgentIdentity(account).ApplyTo(req.Header, nil)
+		return req, nil
+	}
+
+	probeURL := apiURL
+	if s.settingService != nil && !s.settingService.IsOpenAIRemoteCompactionV2Enabled(ctx) {
+		probeURL = legacyCompactURL
+	}
+	req, err := newProbeRequest(probeURL)
 	if err != nil {
 		return s.sendErrorAndEnd(c, "Failed to create request")
-	}
-	req = req.WithContext(WithHTTPUpstreamProfile(req.Context(), HTTPUpstreamProfileOpenAI))
-
-	req.Header.Set("Content-Type", "application/json")
-	req.Header.Set("Accept", "application/json")
-	req.Header.Set("Authorization", "Bearer "+authToken)
-	req.Header.Set("OpenAI-Beta", "responses=experimental")
-	req.Header.Set("Originator", "codex_cli_rs")
-	req.Header.Set("User-Agent", codexCLIUserAgent)
-	req.Header.Set("Version", codexCLIVersion)
-	probeSessionID := compactProbeSessionID(account.ID)
-	req.Header.Set("Session_ID", probeSessionID)
-	req.Header.Set("Conversation_ID", probeSessionID)
-
-	if isOAuth {
-		req.Host = "chatgpt.com"
-		if chatgptAccountID != "" {
-			req.Header.Set("chatgpt-account-id", chatgptAccountID)
-		}
 	}
 
 	proxyURL := ""
@@ -887,6 +975,17 @@ func (s *AccountTestService) testOpenAICompactConnection(c *gin.Context, account
 			mergeAccountExtra(account, updates)
 		}
 		return s.sendErrorAndEnd(c, fmt.Sprintf("Request failed: %s", err.Error()))
+	}
+	if probeURL == apiURL && resp.StatusCode != http.StatusOK && legacyCompactURL != "" && compactProbeNeedsLegacyFallback(resp.StatusCode) {
+		_ = resp.Body.Close()
+		legacyReq, reqErr := newProbeRequest(legacyCompactURL)
+		if reqErr != nil {
+			return s.sendErrorAndEnd(c, "Failed to create legacy compact probe request")
+		}
+		resp, err = s.httpUpstream.DoWithTLS(legacyReq, proxyURL, account.ID, account.Concurrency, s.tlsFPProfileService.ResolveTLSProfile(account))
+		if err != nil {
+			return s.sendErrorAndEnd(c, fmt.Sprintf("Request failed: %s", err.Error()))
+		}
 	}
 	defer func() { _ = resp.Body.Close() }()
 
@@ -918,6 +1017,15 @@ func (s *AccountTestService) testOpenAICompactConnection(c *gin.Context, account
 	s.sendEvent(c, TestEvent{Type: "content", Text: "Compact probe succeeded"})
 	s.sendEvent(c, TestEvent{Type: "test_complete", Success: true})
 	return nil
+}
+
+func compactProbeNeedsLegacyFallback(status int) bool {
+	switch status {
+	case http.StatusNotFound, http.StatusMethodNotAllowed, http.StatusNotImplemented:
+		return true
+	default:
+		return false
+	}
 }
 
 func (s *AccountTestService) reconcileOpenAI429State(ctx context.Context, account *Account, headers http.Header, body []byte) {

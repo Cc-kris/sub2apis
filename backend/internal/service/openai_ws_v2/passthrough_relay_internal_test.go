@@ -291,10 +291,11 @@ func TestParseUsageAndEnrichCoverage(t *testing.T) {
 	require.Equal(t, 0, state.usage.OutputTokens)
 	require.Equal(t, 0, state.usage.CacheReadInputTokens)
 
-	parseUsageAndAccumulate(state, []byte(`{"type":"response.completed","response":{"usage":{"input_tokens":2,"output_tokens":1,"input_tokens_details":{"cached_tokens":1}}}}`), "response.completed", nil)
+	parseUsageAndAccumulate(state, []byte(`{"type":"response.completed","response":{"usage":{"input_tokens":2,"output_tokens":1,"input_tokens_details":{"cached_tokens":1,"cache_write_tokens":4}}}}`), "response.completed", nil)
 	require.Equal(t, 2, state.usage.InputTokens)
 	require.Equal(t, 1, state.usage.OutputTokens)
 	require.Equal(t, 1, state.usage.CacheReadInputTokens)
+	require.Equal(t, 4, state.usage.CacheCreationInputTokens)
 
 	result := &RelayResult{}
 	enrichResult(result, state, 5*time.Millisecond)

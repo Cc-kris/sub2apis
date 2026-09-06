@@ -6,9 +6,53 @@ import (
 	"context"
 	"database/sql"
 	"testing"
+	"testing/fstest"
 
 	"github.com/stretchr/testify/require"
 )
+
+func TestMigrationsRunner_FailedMigrationRollsBackAndCanRetry(t *testing.T) {
+	ctx := context.Background()
+	const migrationName = "99991_failure_recovery_probe.sql"
+	const tableName = "migration_failure_recovery_probe"
+
+	_, err := integrationDB.ExecContext(ctx, "DROP TABLE IF EXISTS "+tableName)
+	require.NoError(t, err)
+	_, err = integrationDB.ExecContext(ctx, "DELETE FROM schema_migrations WHERE filename = $1", migrationName)
+	require.NoError(t, err)
+	t.Cleanup(func() {
+		_, _ = integrationDB.ExecContext(context.Background(), "DROP TABLE IF EXISTS "+tableName)
+		_, _ = integrationDB.ExecContext(context.Background(), "DELETE FROM schema_migrations WHERE filename = $1", migrationName)
+	})
+
+	brokenFS := fstest.MapFS{
+		migrationName: &fstest.MapFile{Data: []byte(`
+			CREATE TABLE migration_failure_recovery_probe (id bigint PRIMARY KEY);
+			INSERT INTO missing_failure_recovery_table (id) VALUES (1);
+		`)},
+	}
+	require.Error(t, applyMigrationsFS(ctx, integrationDB, brokenFS))
+
+	var table sql.NullString
+	require.NoError(t, integrationDB.QueryRowContext(ctx, "SELECT to_regclass('public."+tableName+"')").Scan(&table))
+	require.False(t, table.Valid, "failed transactional migration must not leave schema changes behind")
+
+	var recorded int
+	require.NoError(t, integrationDB.QueryRowContext(ctx, "SELECT COUNT(*) FROM schema_migrations WHERE filename = $1", migrationName).Scan(&recorded))
+	require.Zero(t, recorded, "failed migration must not be recorded")
+
+	fixedFS := fstest.MapFS{
+		migrationName: &fstest.MapFile{Data: []byte(`
+			CREATE TABLE migration_failure_recovery_probe (id bigint PRIMARY KEY);
+			INSERT INTO migration_failure_recovery_probe (id) VALUES (1);
+		`)},
+	}
+	require.NoError(t, applyMigrationsFS(ctx, integrationDB, fixedFS))
+	require.NoError(t, integrationDB.QueryRowContext(ctx, "SELECT to_regclass('public."+tableName+"')").Scan(&table))
+	require.True(t, table.Valid, "retry must apply the corrected migration")
+	require.NoError(t, integrationDB.QueryRowContext(ctx, "SELECT COUNT(*) FROM schema_migrations WHERE filename = $1", migrationName).Scan(&recorded))
+	require.Equal(t, 1, recorded)
+}
 
 func TestMigrationsRunner_IsIdempotent_AndSchemaIsUpToDate(t *testing.T) {
 	tx := testTx(t)

@@ -159,6 +159,14 @@ func applyGrokCredentialUsageFallback(usage *UsageInfo, account *Account) {
 	if usage == nil || account == nil {
 		return
 	}
+	// The OAuth access token is the authoritative tier signal when present.
+	// Decode only the payload claim; authentication and signature validation
+	// remain the responsibility of the OAuth provider.
+	if jwtTier := xai.SubscriptionTierFromJWT(account.GetCredential("access_token")); jwtTier != "" {
+		usage.SubscriptionTier = jwtTier
+		usage.SubscriptionTierRaw = jwtTier
+		return
+	}
 	if usage.SubscriptionTier == "" {
 		tier := strings.TrimSpace(account.GetCredential("subscription_tier"))
 		usage.SubscriptionTier = tier

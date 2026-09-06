@@ -72,10 +72,10 @@
       <LoadingSpinner />
     </div>
     <div v-else-if="displayEndpointStats.length > 0 && chartData" class="flex items-center gap-6">
-      <div class="h-48 w-48">
-        <Doughnut :data="chartData" :options="doughnutOptions" />
+      <div class="h-48 w-48" role="img" :aria-label="title || t('usage.endpointDistribution')" :title="title || t('usage.endpointDistribution')">
+        <Doughnut :data="chartData" :options="doughnutOptions" :aria-label="title || t('usage.endpointDistribution')" />
       </div>
-      <div class="max-h-48 flex-1 overflow-y-auto">
+      <div class="max-h-48 flex-1 overflow-y-auto focus:outline-none focus:ring-2 focus:ring-primary-500" tabindex="0" role="region" :aria-label="title || t('usage.endpointDistribution')" :title="title || t('usage.endpointDistribution')">
         <table class="w-full text-xs">
           <thead>
             <tr class="text-gray-500 dark:text-gray-400">
@@ -105,10 +105,10 @@
                 <td class="py-1.5 text-right text-gray-600 dark:text-gray-400">
                   {{ formatTokens(item.total_tokens) }}
                 </td>
-                <td class="py-1.5 text-right text-green-600 dark:text-green-400">
+                <td class="py-1.5 text-right text-green-700 dark:text-green-300">
                   ${{ formatCost(item.actual_cost) }}
                 </td>
-                <td class="py-1.5 text-right text-gray-400 dark:text-gray-500">
+                <td class="py-1.5 text-right text-gray-600 dark:text-gray-400">
                   ${{ formatCost(item.cost) }}
                 </td>
               </tr>

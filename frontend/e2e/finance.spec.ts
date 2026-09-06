@@ -11,6 +11,7 @@ async function mockFinance(page: Page) {
   await page.addInitScript((savedAdmin) => {
     localStorage.setItem('auth_token', 'finance-e2e-token')
     localStorage.setItem('auth_user', JSON.stringify(savedAdmin))
+    localStorage.setItem('sub2api_locale', 'zh')
     localStorage.setItem('admin_guide_1_admin_v4_interactive', 'true')
     ;(window as any).__APP_CONFIG__ = { site_name: 'CCAI', version: 'e2e', model_square_enabled: true, custom_menu_items: [] }
   }, admin)
@@ -38,7 +39,7 @@ async function mockFinance(page: Page) {
 test.describe('Finance owner report', () => {
   test.beforeEach(async ({ page }) => { await mockFinance(page) })
 
-  test('shows current, historical loss, funds risk and auditable drill-down', async ({ page }) => {
+  test('shows current, historical loss, funds risk and auditable drill-down', async ({ page }, testInfo) => {
     await page.goto('/admin/finance')
     await expect(page.getByRole('main').getByRole('heading', { name: '经营与财务' })).toBeVisible({ timeout: 15_000 })
     await expect(page.locator('p').filter({ hasText: /^客户消费金额$/ })).toBeVisible()
@@ -60,13 +61,15 @@ test.describe('Finance owner report', () => {
 
     const results = await new AxeBuilder({ page }).withTags(['wcag2a', 'wcag2aa']).analyze()
     expect(results.violations.filter(item => ['critical', 'serious'].includes(item.impact || ''))).toEqual([])
+    await testInfo.attach('finance-owner-report', { body: await page.screenshot(), contentType: 'image/png' })
   })
 
-  test('keeps the owner summary usable on mobile', async ({ page, isMobile }) => {
+  test('keeps the owner summary usable on mobile', async ({ page, isMobile }, testInfo) => {
     test.skip(!isMobile, 'mobile report acceptance')
     await page.goto('/admin/finance')
     await expect(page.locator('p').filter({ hasText: /^客户消费金额$/ })).toBeVisible()
     await page.getByRole('button', { name: '上游账号' }).click()
     await expect(page.getByRole('heading', { name: '上游账号采购倍率' })).toBeVisible()
+    await testInfo.attach('finance-owner-mobile', { body: await page.screenshot(), contentType: 'image/png' })
   })
 })

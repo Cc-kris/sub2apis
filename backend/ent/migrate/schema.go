@@ -580,7 +580,8 @@ var (
 		{Name: "created_at", Type: field.TypeTime, SchemaType: map[string]string{"postgres": "timestamptz"}},
 		{Name: "updated_at", Type: field.TypeTime, SchemaType: map[string]string{"postgres": "timestamptz"}},
 		{Name: "name", Type: field.TypeString, Size: 100},
-		{Name: "provider", Type: field.TypeEnum, Enums: []string{"openai", "anthropic", "gemini", "grok"}},
+		{Name: "provider", Type: field.TypeEnum, Enums: []string{"openai", "anthropic", "gemini", "grok", "antigravity", "kimi", "zhipu", "deepseek"}},
+		{Name: "mode", Type: field.TypeString, Size: 16, Default: "active"},
 		{Name: "api_mode", Type: field.TypeString, Size: 32, Default: "chat_completions"},
 		{Name: "endpoint", Type: field.TypeString, Size: 500},
 		{Name: "api_key_encrypted", Type: field.TypeString},
@@ -591,6 +592,7 @@ var (
 		{Name: "interval_seconds", Type: field.TypeInt},
 		{Name: "last_checked_at", Type: field.TypeTime, Nullable: true},
 		{Name: "created_by", Type: field.TypeInt64},
+		{Name: "account_id", Type: field.TypeInt64, Nullable: true},
 		{Name: "extra_headers", Type: field.TypeJSON},
 		{Name: "body_override_mode", Type: field.TypeString, Size: 10, Default: "off"},
 		{Name: "body_override", Type: field.TypeJSON, Nullable: true},
@@ -604,7 +606,7 @@ var (
 		ForeignKeys: []*schema.ForeignKey{
 			{
 				Symbol:     "channel_monitors_channel_monitor_request_templates_request_template",
-				Columns:    []*schema.Column{ChannelMonitorsColumns[18]},
+				Columns:    []*schema.Column{ChannelMonitorsColumns[20]},
 				RefColumns: []*schema.Column{ChannelMonitorRequestTemplatesColumns[0]},
 				OnDelete:   schema.SetNull,
 			},
@@ -613,7 +615,7 @@ var (
 			{
 				Name:    "channelmonitor_enabled_last_checked_at",
 				Unique:  false,
-				Columns: []*schema.Column{ChannelMonitorsColumns[11], ChannelMonitorsColumns[13]},
+				Columns: []*schema.Column{ChannelMonitorsColumns[12], ChannelMonitorsColumns[14]},
 			},
 			{
 				Name:    "channelmonitor_provider",
@@ -623,17 +625,22 @@ var (
 			{
 				Name:    "channelmonitor_provider_api_mode",
 				Unique:  false,
-				Columns: []*schema.Column{ChannelMonitorsColumns[4], ChannelMonitorsColumns[5]},
+				Columns: []*schema.Column{ChannelMonitorsColumns[4], ChannelMonitorsColumns[6]},
 			},
 			{
 				Name:    "channelmonitor_group_name",
 				Unique:  false,
-				Columns: []*schema.Column{ChannelMonitorsColumns[10]},
+				Columns: []*schema.Column{ChannelMonitorsColumns[11]},
 			},
 			{
 				Name:    "channelmonitor_template_id",
 				Unique:  false,
-				Columns: []*schema.Column{ChannelMonitorsColumns[18]},
+				Columns: []*schema.Column{ChannelMonitorsColumns[20]},
+			},
+			{
+				Name:    "channelmonitor_account_id",
+				Unique:  false,
+				Columns: []*schema.Column{ChannelMonitorsColumns[16]},
 			},
 		},
 	}
@@ -1038,6 +1045,8 @@ var (
 		{Name: "default_mapped_model", Type: field.TypeString, Size: 100, Default: ""},
 		{Name: "messages_dispatch_model_config", Type: field.TypeJSON, SchemaType: map[string]string{"postgres": "jsonb"}},
 		{Name: "rpm_limit", Type: field.TypeInt, Default: 0},
+		{Name: "long_context_pricing_enabled", Type: field.TypeBool, Default: true},
+		{Name: "model_pricing", Type: field.TypeJSON, SchemaType: map[string]string{"postgres": "jsonb"}},
 	}
 	// GroupsTable holds the schema information for the "groups" table.
 	GroupsTable = &schema.Table{
@@ -2537,6 +2546,7 @@ var (
 		{Name: "input_tokens", Type: field.TypeInt64, Default: 0},
 		{Name: "output_tokens", Type: field.TypeInt64, Default: 0},
 		{Name: "cache_read_tokens", Type: field.TypeInt64, Default: 0},
+		{Name: "cache_creation_tokens", Type: field.TypeInt64, Default: 0},
 		{Name: "cache_creation_5m_tokens", Type: field.TypeInt64, Default: 0},
 		{Name: "cache_creation_1h_tokens", Type: field.TypeInt64, Default: 0},
 		{Name: "request_count", Type: field.TypeInt64, Default: 0},
@@ -2578,7 +2588,7 @@ var (
 			{
 				Name:    "usageupstreamattempt_account_id_created_at",
 				Unique:  false,
-				Columns: []*schema.Column{UsageUpstreamAttemptsColumns[4], UsageUpstreamAttemptsColumns[31]},
+				Columns: []*schema.Column{UsageUpstreamAttemptsColumns[4], UsageUpstreamAttemptsColumns[32]},
 			},
 		},
 	}

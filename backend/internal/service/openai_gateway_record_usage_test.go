@@ -95,6 +95,61 @@ func TestOpenAIGatewayServiceRecordUsage_RejectsNilInput(t *testing.T) {
 	require.Error(t, svc.RecordUsage(context.Background(), &OpenAIRecordUsageInput{}))
 }
 
+func TestXSearchBillingSnapshotFreezesTenDecimalPrice(t *testing.T) {
+	price := decimal.RequireFromString("0.0123456789")
+	snapshot, err := newXSearchBillingSnapshot(&price)
+	require.NoError(t, err)
+	require.NotNil(t, snapshot)
+	require.Equal(t, "0.0123456789", snapshot.price.StringFixed(10))
+
+	log := &UsageLog{}
+	snapshot.apply(log)
+	require.NotNil(t, log.UsageListValue)
+	require.Equal(t, "0.0123456789", log.UsageListValue.StringFixed(10))
+	require.Equal(t, "0.0123456789", decimal.NewFromFloat(log.ActualCost).StringFixed(10))
+	require.Equal(t, "per_request", *log.BillingMode)
+	require.Equal(t, "x_search", *log.SalesPricingSource)
+
+	cost := snapshot.cost()
+	require.Equal(t, "0.0123456789", decimal.NewFromFloat(cost.ActualCost).StringFixed(10))
+	require.Equal(t, string(BillingModePerRequest), cost.BillingMode)
+}
+
+func TestXSearchBillingSnapshotRejectsNonPositivePrice(t *testing.T) {
+	zero := decimal.Zero
+	_, err := newXSearchBillingSnapshot(&zero)
+	require.EqualError(t, err, "x_search fixed request price must be positive")
+}
+
+func TestXSearchBillingSnapshotRejectsFloatPrecisionLoss(t *testing.T) {
+	large := decimal.RequireFromString("1234567890.1234567890")
+	_, err := newXSearchBillingSnapshot(&large)
+	require.EqualError(t, err, "x_search fixed request price exceeds lossless billing precision")
+}
+
+func TestOpenAIGatewayServiceRecordUsage_UsesXSearchFixedPriceSnapshot(t *testing.T) {
+	usageRepo := &openAIRecordUsageLogRepoStub{inserted: true}
+	billingRepo := &openAIRecordUsageBillingRepoStub{result: &UsageBillingApplyResult{Applied: true}}
+	svc := newOpenAIRecordUsageServiceWithBillingRepoForTest(usageRepo, billingRepo, &openAIRecordUsageUserRepoStub{}, &openAIRecordUsageSubRepoStub{}, nil)
+	price := decimal.RequireFromString("0.0123456789")
+	err := svc.RecordUsage(context.Background(), &OpenAIRecordUsageInput{
+		Result:            &OpenAIForwardResult{RequestID: "x-search-fixed-price", Model: "x_search", Duration: time.Second},
+		APIKey:            &APIKey{ID: 10, Group: &Group{RateMultiplier: 9}},
+		User:              &User{ID: 20},
+		Account:           &Account{ID: 30, Type: AccountTypeAPIKey},
+		InboundEndpoint:   "/x_search",
+		UpstreamEndpoint:  "/v1/responses",
+		FixedRequestPrice: &price,
+	})
+	require.NoError(t, err)
+	require.NotNil(t, usageRepo.lastLog)
+	require.Equal(t, "0.0123456789", usageRepo.lastLog.UsageListValue.StringFixed(10))
+	require.Equal(t, "0.0123456789", decimal.NewFromFloat(usageRepo.lastLog.ActualCost).StringFixed(10))
+	require.Equal(t, "per_request", *usageRepo.lastLog.BillingMode)
+	require.Equal(t, 1, billingRepo.calls)
+	require.Equal(t, "0.0123456789", decimal.NewFromFloat(billingRepo.lastCmd.BalanceCost).StringFixed(10))
+}
+
 func TestOpenAIGatewayServiceRecordUsage_PersistsRequestTimeUpstreamMultiplier(t *testing.T) {
 	usageRepo := &openAIRecordUsageLogRepoStub{inserted: true}
 	svc := newOpenAIRecordUsageServiceForTest(usageRepo, &openAIRecordUsageUserRepoStub{}, &openAIRecordUsageSubRepoStub{}, nil)
@@ -356,6 +411,23 @@ func TestOpenAIGatewayServiceRecordUsage_MissingPricingRecordsZeroCostUsageLog(t
 	require.Zero(t, billingRepo.lastCmd.APIKeyQuotaCost)
 	require.Zero(t, billingRepo.lastCmd.APIKeyRateLimitCost)
 	require.Zero(t, billingRepo.lastCmd.AccountQuotaCost)
+}
+
+func TestOpenAIGatewayServiceRecordUsageResolverDisabledSkipsRequestedTextResolver(t *testing.T) {
+	usageRepo := &openAIRecordUsageLogRepoStub{inserted: true}
+	billingRepo := &openAIRecordUsageBillingRepoStub{result: &UsageBillingApplyResult{Applied: true}}
+	svc := newOpenAIRecordUsageServiceWithBillingRepoForTest(usageRepo, billingRepo, &openAIRecordUsageUserRepoStub{}, &openAIRecordUsageSubRepoStub{}, nil)
+	svc.settingService = NewSettingService(&settingUpdateRepoStub{values: map[string]string{SettingKeySalesPricingResolverEnabled: "false"}}, nil)
+	svc.resolver = &ModelPricingResolver{}
+	group := &Group{ID: 7, RateMultiplier: 1}
+
+	err := svc.RecordUsage(context.Background(), &OpenAIRecordUsageInput{
+		Result: &OpenAIForwardResult{RequestID: "resolver-off", Usage: OpenAIUsage{InputTokens: 10, OutputTokens: 2}, Model: "gpt-5.2", Duration: time.Second},
+		APIKey: &APIKey{ID: 1, Group: group, GroupID: &group.ID}, User: &User{ID: 2}, Account: &Account{ID: 3, Type: AccountTypeAPIKey},
+		ChannelUsageFields: ChannelUsageFields{BillingModelSource: BillingModelSourceChannelMapped, OriginalModel: "gpt-5.2", ChannelMappedModel: "gpt-image-1"},
+	})
+	require.NoError(t, err)
+	require.Equal(t, 1, usageRepo.calls)
 }
 
 func TestOpenAIGatewayServiceRecordUsage_UsesUserSpecificGroupRate(t *testing.T) {

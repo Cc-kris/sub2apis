@@ -226,6 +226,23 @@ func TestOpenAIEnsureForwardErrorResponse_ResponsesRouteAfterWrittenEmitsRespons
 	assert.Contains(t, body, "Upstream request failed")
 }
 
+func TestOpenAIEnsureAnthropicErrorResponse_AfterWrittenEmitsSSEError(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	w := httptest.NewRecorder()
+	c, _ := gin.CreateTestContext(w)
+	c.Request = httptest.NewRequest(http.MethodPost, EndpointMessages, nil)
+	_, _ = c.Writer.WriteString("event: message_start\ndata: {}\n\n")
+
+	h := &OpenAIGatewayHandler{}
+	wrote := h.ensureAnthropicErrorResponse(c, false)
+
+	require.True(t, wrote)
+	require.Equal(t, http.StatusOK, w.Code)
+	assert.Contains(t, w.Body.String(), "event: message_start")
+	assert.Contains(t, w.Body.String(), "event: error\n")
+	assert.Contains(t, w.Body.String(), `"type":"api_error"`)
+}
+
 func TestShouldLogOpenAIForwardFailureAsWarn(t *testing.T) {
 	gin.SetMode(gin.TestMode)
 

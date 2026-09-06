@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"log/slog"
 	"net/http"
@@ -14,8 +15,11 @@ import (
 
 	"github.com/Wei-Shaw/sub2api/internal/config"
 	"github.com/Wei-Shaw/sub2api/internal/pkg/logger"
+	"github.com/google/uuid"
 	"github.com/tidwall/gjson"
 )
+
+var ErrOpenAITeamWorkspaceBlocked = errors.New("openai Team workspace is blocked; use a Team recovery probe")
 
 // RateLimitService 处理限流和过载状态管理
 type RateLimitService struct {
@@ -29,6 +33,7 @@ type RateLimitService struct {
 	settingService        *SettingService
 	tokenCacheInvalidator TokenCacheInvalidator
 	runtimeBlocker        AccountRuntimeBlocker
+	teamBlockStore        OpenAITeamBlockStore
 	usageCacheMu          sync.RWMutex
 	usageCache            map[int64]*geminiUsageCacheEntry
 }
@@ -36,6 +41,12 @@ type RateLimitService struct {
 type AccountRuntimeBlocker interface {
 	BlockAccountScheduling(account *Account, until time.Time, reason string)
 	ClearAccountSchedulingBlock(accountID int64)
+}
+
+// OpenAITeamRuntimeBlocker clears the in-process fast-path after the durable
+// Team state has been recovered successfully.
+type OpenAITeamRuntimeBlocker interface {
+	ClearOpenAITeamScheduling(teamID string)
 }
 
 // SuccessfulTestRecoveryResult 表示测试成功后恢复了哪些运行时状态。
@@ -108,6 +119,11 @@ func (s *RateLimitService) SetAccountRuntimeBlocker(blocker AccountRuntimeBlocke
 	s.runtimeBlocker = blocker
 }
 
+// SetOpenAITeamBlockStore injects the persistent Team workspace circuit breaker.
+func (s *RateLimitService) SetOpenAITeamBlockStore(store OpenAITeamBlockStore) {
+	s.teamBlockStore = store
+}
+
 func (s *RateLimitService) notifyAccountSchedulingBlocked(account *Account, until time.Time, reason string) {
 	if s == nil || s.runtimeBlocker == nil || account == nil {
 		return
@@ -154,6 +170,12 @@ func (s *RateLimitService) CheckErrorPolicy(ctx context.Context, account *Accoun
 // HandleUpstreamError 处理上游错误响应，标记账号状态
 // 返回是否应该停止该账号的调度
 func (s *RateLimitService) HandleUpstreamError(ctx context.Context, account *Account, statusCode int, headers http.Header, responseBody []byte) (shouldDisable bool) {
+	if teamAlreadyHandled, _ := ctx.Value(openAITeamDeactivationHandledContextKey{}).(bool); teamAlreadyHandled {
+		return true
+	}
+	if s.HandleOpenAITeamWorkspaceDeactivation(ctx, account, statusCode, headers, responseBody) {
+		return true
+	}
 	customErrorCodesEnabled := account.IsCustomErrorCodesEnabled()
 
 	// 池模式默认不标记本地账号状态；仅当用户显式配置自定义错误码时按本地策略处理。
@@ -279,13 +301,6 @@ func (s *RateLimitService) HandleUpstreamError(ctx context.Context, account *Acc
 			shouldDisable = true
 		}
 	case 402:
-		// OpenAI: deactivated_workspace 表示工作区已停用，直接标记 error
-		if account.Platform == PlatformOpenAI && gjson.GetBytes(responseBody, "detail.code").String() == "deactivated_workspace" {
-			msg := "Workspace deactivated (402): workspace has been deactivated"
-			s.handleAuthError(ctx, account, msg)
-			shouldDisable = true
-			break
-		}
 		// 支付要求：余额不足或计费问题，停止调度
 		msg := "Payment required (402): insufficient balance or billing issue"
 		if upstreamMsg != "" {
@@ -329,6 +344,43 @@ func (s *RateLimitService) HandleUpstreamError(ctx context.Context, account *Acc
 	}
 
 	return shouldDisable
+}
+
+type openAITeamDeactivationHandledContextKey struct{}
+
+// MarkOpenAITeamWorkspaceDeactivationHandled prevents a passthrough path that
+// already persisted the Team event from performing the same transaction twice.
+func MarkOpenAITeamWorkspaceDeactivationHandled(ctx context.Context) context.Context {
+	return context.WithValue(ctx, openAITeamDeactivationHandledContextKey{}, true)
+}
+
+// HandleOpenAITeamWorkspaceDeactivation persists the Team-wide breaker before
+// an account-local policy can intercept the response. Gateway passthrough
+// paths call it directly because they return before regular error processing.
+func (s *RateLimitService) HandleOpenAITeamWorkspaceDeactivation(ctx context.Context, account *Account, statusCode int, headers http.Header, responseBody []byte) bool {
+	if s != nil && s.settingService != nil && !s.settingService.IsOpenAITeamLinkedResolverEnabled(ctx) {
+		return false
+	}
+	if s == nil || account == nil || account.Platform != PlatformOpenAI || !IsOpenAITeamWorkspaceDeactivated(statusCode, responseBody) {
+		return false
+	}
+	teamID := strings.TrimSpace(account.GetChatGPTAccountID())
+	if teamID == "" {
+		return false
+	}
+	requestID := openAITeamBlockRequestID(headers, teamID, account.ID, responseBody)
+	until := time.Now().Add(openAITeamBlockTTL)
+	if s.teamBlockStore == nil {
+		slog.Error("openai_team_workspace_store_unavailable", "account_id", account.ID, "team_id", teamID, "request_id", requestID)
+		return true
+	}
+	created, err := s.teamBlockStore.BlockTeamAtomically(ctx, teamID, requestID, account.ID, until)
+	if err != nil {
+		slog.Error("openai_team_workspace_block_failed", "account_id", account.ID, "team_id", teamID, "request_id", requestID, "error", err)
+		return true
+	}
+	slog.Warn("openai_team_workspace_deactivated", "account_id", account.ID, "team_id", teamID, "request_id", requestID, "event_created", created, "block_until", until)
+	return true
 }
 
 // PreCheckUsage proactively checks local quota before dispatching a request.
@@ -1436,6 +1488,9 @@ func (s *RateLimitService) UpdateSessionWindow(ctx context.Context, account *Acc
 
 // ClearRateLimit 清除账号的限流状态
 func (s *RateLimitService) ClearRateLimit(ctx context.Context, accountID int64) error {
+	if err := s.ensureNoActiveOpenAITeamBlock(ctx, accountID); err != nil {
+		return err
+	}
 	if err := s.accountRepo.ClearRateLimit(ctx, accountID); err != nil {
 		return err
 	}
@@ -1470,6 +1525,9 @@ func (s *RateLimitService) ResetOpenAI403Counter(ctx context.Context, accountID 
 
 // RecoverAccountState 按需恢复账号的可恢复运行时状态。
 func (s *RateLimitService) RecoverAccountState(ctx context.Context, accountID int64, options AccountRecoveryOptions) (*SuccessfulTestRecoveryResult, error) {
+	if err := s.ensureNoActiveOpenAITeamBlock(ctx, accountID); err != nil {
+		return nil, err
+	}
 	account, err := s.accountRepo.GetByID(ctx, accountID)
 	if err != nil {
 		return nil, err
@@ -1510,7 +1568,120 @@ func (s *RateLimitService) RecoverAccountAfterSuccessfulTest(ctx context.Context
 	return s.RecoverAccountState(ctx, accountID, AccountRecoveryOptions{})
 }
 
+// ClaimOpenAITeamProbe grants a due Team block to one probe execution.
+func (s *RateLimitService) ClaimOpenAITeamProbe(ctx context.Context, accountID int64, owner string) (*OpenAITeamProbeLease, error) {
+	if s != nil && s.settingService != nil && !s.settingService.IsOpenAITeamLinkedResolverEnabled(ctx) {
+		return nil, nil
+	}
+	return s.claimOpenAITeamProbe(ctx, accountID, owner, false)
+}
+
+// ClaimOpenAITeamProbeNow starts an administrator-requested recovery probe for
+// an active Team block. Successful completion still uses the normal CAS clear.
+func (s *RateLimitService) ClaimOpenAITeamProbeNow(ctx context.Context, accountID int64, owner string) (*OpenAITeamProbeLease, error) {
+	if s != nil && s.settingService != nil && !s.settingService.IsOpenAITeamLinkedResolverEnabled(ctx) {
+		return nil, nil
+	}
+	return s.claimOpenAITeamProbe(ctx, accountID, owner, true)
+}
+
+func (s *RateLimitService) claimOpenAITeamProbe(ctx context.Context, accountID int64, owner string, force bool) (*OpenAITeamProbeLease, error) {
+	if s == nil || s.teamBlockStore == nil || s.accountRepo == nil {
+		return nil, nil
+	}
+	account, err := s.accountRepo.GetByID(ctx, accountID)
+	if err != nil {
+		return nil, err
+	}
+	teamID := strings.TrimSpace(account.GetChatGPTAccountID())
+	if teamID == "" {
+		return nil, nil
+	}
+	owner = strings.TrimSpace(owner) + ":" + uuid.NewString()
+	if force {
+		return s.teamBlockStore.ClaimProbeNow(ctx, teamID, owner, time.Now().Add(2*time.Minute))
+	}
+	return s.teamBlockStore.ClaimDueProbe(ctx, teamID, owner, time.Now().Add(2*time.Minute))
+}
+
+// ListDueOpenAITeamProbeTargets finds expired Team blocks that require an
+// independent recovery probe. It does not depend on an account test plan.
+func (s *RateLimitService) ListDueOpenAITeamProbeTargets(ctx context.Context, limit int) ([]OpenAITeamProbeTarget, error) {
+	if s != nil && s.settingService != nil && !s.settingService.IsOpenAITeamLinkedResolverEnabled(ctx) {
+		return nil, nil
+	}
+	if s == nil || s.teamBlockStore == nil {
+		return nil, nil
+	}
+	return s.teamBlockStore.ListDueProbeTargets(ctx, limit)
+}
+
+// HasActiveOpenAITeamBlock prevents a manual single-account recovery from
+// bypassing the Team-wide probe and transactional recovery protocol.
+func (s *RateLimitService) HasActiveOpenAITeamBlock(ctx context.Context, accountID int64) (bool, error) {
+	if s == nil || s.teamBlockStore == nil || s.accountRepo == nil {
+		return false, nil
+	}
+	account, err := s.accountRepo.GetByID(ctx, accountID)
+	if err != nil {
+		return false, err
+	}
+	teamID := strings.TrimSpace(account.GetChatGPTAccountID())
+	if teamID == "" {
+		return false, nil
+	}
+	return s.HasActiveOpenAITeamBlockForTeam(ctx, teamID)
+}
+
+// HasActiveOpenAITeamBlockForTeam reads the durable Team truth used to expire
+// in-process fast-path entries safely across application instances.
+func (s *RateLimitService) HasActiveOpenAITeamBlockForTeam(ctx context.Context, teamID string) (bool, error) {
+	if s == nil || s.teamBlockStore == nil || strings.TrimSpace(teamID) == "" {
+		return false, nil
+	}
+	return s.teamBlockStore.HasActiveBlock(ctx, strings.TrimSpace(teamID))
+}
+
+// GetOpenAITeamBlockStatus returns only operational state for the admin UI.
+func (s *RateLimitService) GetOpenAITeamBlockStatus(ctx context.Context, accountID int64) (*OpenAITeamBlockStatus, error) {
+	if s == nil || s.teamBlockStore == nil || s.accountRepo == nil {
+		return nil, nil
+	}
+	account, err := s.accountRepo.GetByID(ctx, accountID)
+	if err != nil {
+		return nil, err
+	}
+	teamID := strings.TrimSpace(account.GetChatGPTAccountID())
+	if teamID == "" {
+		return nil, nil
+	}
+	return s.teamBlockStore.GetActiveBlockStatus(ctx, teamID)
+}
+
+func (s *RateLimitService) CompleteOpenAITeamProbe(ctx context.Context, lease *OpenAITeamProbeLease, succeeded bool) error {
+	if s != nil && s.settingService != nil && !s.settingService.IsOpenAITeamLinkedResolverEnabled(ctx) {
+		return nil
+	}
+	if s == nil || s.teamBlockStore == nil || lease == nil {
+		return nil
+	}
+	if succeeded {
+		cleared, err := s.teamBlockStore.ClearTeamAfterProbe(ctx, *lease)
+		if err == nil && cleared {
+			if runtimeBlocker, ok := s.runtimeBlocker.(OpenAITeamRuntimeBlocker); ok {
+				runtimeBlocker.ClearOpenAITeamScheduling(lease.TeamID)
+			}
+		}
+		return err
+	}
+	_, err := s.teamBlockStore.ReblockTeamAfterProbe(ctx, *lease, time.Now().Add(openAITeamBlockTTL))
+	return err
+}
+
 func (s *RateLimitService) ClearTempUnschedulable(ctx context.Context, accountID int64) error {
+	if err := s.ensureNoActiveOpenAITeamBlock(ctx, accountID); err != nil {
+		return err
+	}
 	if err := s.accountRepo.ClearTempUnschedulable(ctx, accountID); err != nil {
 		return err
 	}
@@ -1524,6 +1695,17 @@ func (s *RateLimitService) ClearTempUnschedulable(ctx context.Context, accountID
 		slog.Warn("clear_model_rate_limits_on_temp_unsched_reset_failed", "account_id", accountID, "error", err)
 	}
 	s.notifyAccountSchedulingBlockCleared(accountID)
+	return nil
+}
+
+func (s *RateLimitService) ensureNoActiveOpenAITeamBlock(ctx context.Context, accountID int64) error {
+	active, err := s.HasActiveOpenAITeamBlock(ctx, accountID)
+	if err != nil {
+		return err
+	}
+	if active {
+		return ErrOpenAITeamWorkspaceBlocked
+	}
 	return nil
 }
 

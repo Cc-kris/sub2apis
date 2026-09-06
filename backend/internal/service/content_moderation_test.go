@@ -125,6 +125,10 @@ func (r *contentModerationTestUserRepo) GetByEmail(ctx context.Context, email st
 	panic("unexpected GetByEmail call")
 }
 
+func (r *contentModerationTestUserRepo) CountByEmailDomain(ctx context.Context, domain string) (int, error) {
+	return 0, nil
+}
+
 func (r *contentModerationTestUserRepo) GetFirstAdmin(ctx context.Context) (*User, error) {
 	panic("unexpected GetFirstAdmin call")
 }

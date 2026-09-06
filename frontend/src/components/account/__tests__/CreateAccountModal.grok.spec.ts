@@ -22,8 +22,24 @@ describe('CreateAccountModal Grok account types', () => {
     expect(source).toContain("? 'https://api.x.ai/v1'")
     expect(source).toContain("form.platform === 'grok'")
     expect(source).toContain("? 'xai-...'")
-    expect(source).toMatch(/newPlatform === 'grok'[\s\S]{0,100}\? 'https:\/\/api\.x\.ai\/v1'/)
-    expect(source).toMatch(/form\.platform === 'grok'[\s\S]{0,100}\? 'https:\/\/api\.x\.ai\/v1'/)
+    expect(source).toContain("case 'grok':")
+    expect(source).toContain("return 'https://api.x.ai/v1'")
+    expect(source).toContain('apiKeyBaseUrl.value = defaultAPIKeyBaseURL(newPlatform)')
+    expect(source).toContain('const defaultBaseUrl = defaultAPIKeyBaseURL(form.platform)')
+  })
+
+  it('forces domestic OpenAI-compatible providers onto the API-key flow with their own default URLs', () => {
+    expect(source).toContain('const isDomesticOpenAICompatiblePlatform')
+    expect(source).toContain("platform === 'kimi' || platform === 'zhipu' || platform === 'deepseek'")
+    expect(source).toContain("case 'kimi':")
+    expect(source).toContain("return 'https://api.moonshot.cn'")
+    expect(source).toContain("case 'zhipu':")
+    expect(source).toContain("return 'https://open.bigmodel.cn/api/paas'")
+    expect(source).toContain("case 'deepseek':")
+    expect(source).toContain("return 'https://api.deepseek.com'")
+    expect(source).toContain("} else if (isDomesticOpenAICompatiblePlatform(newPlatform)) {")
+    expect(source).toContain("accountCategory.value = 'apikey'")
+    expect(source).toContain('const defaultBaseUrl = defaultAPIKeyBaseURL(form.platform)')
   })
 
   it('exposes custom upstream URL and header override for the OAuth create flow', () => {

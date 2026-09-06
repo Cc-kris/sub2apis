@@ -3,6 +3,7 @@ package service
 import (
 	"context"
 	"fmt"
+	"net/http"
 	"time"
 
 	infraerrors "github.com/Wei-Shaw/sub2api/internal/pkg/errors"
@@ -13,6 +14,12 @@ import (
 var (
 	ErrAccountNotFound = infraerrors.NotFound("ACCOUNT_NOT_FOUND", "account not found")
 	ErrAccountNilInput = infraerrors.BadRequest("ACCOUNT_NIL_INPUT", "account input cannot be nil")
+	// ErrBulkUpdateTargetInvalid is returned when the target set changed while
+	// the request was being prepared (missing/deleted account or type change).
+	ErrBulkUpdateTargetInvalid = infraerrors.New(http.StatusUnprocessableEntity, "account_bulk_update_target_invalid", "bulk update targets changed; no accounts were updated")
+	// ErrBulkUpdateFieldNotApplicable is returned when a request contains a
+	// platform/type-specific field that cannot be applied to every target.
+	ErrBulkUpdateFieldNotApplicable = infraerrors.New(http.StatusUnprocessableEntity, "account_field_not_applicable", "bulk update field is not applicable to one or more target accounts")
 )
 
 const AccountListGroupUngrouped int64 = -1
@@ -101,6 +108,43 @@ type AccountRepository interface {
 	ResetQuotaUsed(ctx context.Context, id int64) error
 }
 
+// OpenAITeamBlockStore persists cross-account Team circuit-breaker state.
+type OpenAITeamBlockStore interface {
+	BlockTeamAtomically(ctx context.Context, teamID, requestID string, triggerAccountID int64, until time.Time) (bool, error)
+	ListDueProbeTargets(ctx context.Context, limit int) ([]OpenAITeamProbeTarget, error)
+	HasActiveBlock(ctx context.Context, teamID string) (bool, error)
+	GetActiveBlockStatus(ctx context.Context, teamID string) (*OpenAITeamBlockStatus, error)
+	ClaimDueProbe(ctx context.Context, teamID, owner string, probeUntil time.Time) (*OpenAITeamProbeLease, error)
+	ClaimProbeNow(ctx context.Context, teamID, owner string, probeUntil time.Time) (*OpenAITeamProbeLease, error)
+	ClearTeamAfterProbe(ctx context.Context, lease OpenAITeamProbeLease) (bool, error)
+	ReblockTeamAfterProbe(ctx context.Context, lease OpenAITeamProbeLease, until time.Time) (bool, error)
+}
+
+// OpenAITeamProbeTarget identifies one linked account that can verify a due
+// Team workspace recovery without depending on an operator-created test plan.
+type OpenAITeamProbeTarget struct {
+	TeamID    string
+	AccountID int64
+}
+
+// OpenAITeamBlockStatus exposes only operational recovery state; credentials
+// and upstream request contents never leave the repository.
+type OpenAITeamBlockStatus struct {
+	TeamID             string
+	State              string
+	BlockUntil         time.Time
+	AffectedAccountIDs []int64
+}
+
+// OpenAITeamProbeLease identifies the one event a probe worker owns. EventID
+// prevents an older successful probe from clearing a newly received 402 block.
+type OpenAITeamProbeLease struct {
+	EventID    int64
+	MaxEventID int64
+	TeamID     string
+	Owner      string
+}
+
 // AccountUpstreamMultiplierAuditRepository atomically persists a procurement
 // multiplier and its immutable audit row. It is kept separate from the broad
 // account repository so lightweight scheduler and unit-test repositories do not
@@ -142,6 +186,15 @@ type AccountBulkUpdate struct {
 	Schedulable    *bool
 	Credentials    map[string]any
 	Extra          map[string]any
+}
+
+// AccountBulkUpdateTarget is the platform/type snapshot captured before the
+// repository locks the target rows. The repository re-checks it in the same
+// transaction to close the TOCTOU window.
+type AccountBulkUpdateTarget struct {
+	ID       int64
+	Platform string
+	Type     string
 }
 
 // CreateAccountRequest 创建账号请求
@@ -468,6 +521,9 @@ func (s *AccountService) TestCredentials(ctx context.Context, id int64) error {
 		return nil
 	case PlatformOpenAI:
 		// TODO: 测试OpenAI API凭证
+		return nil
+	case PlatformKimi, PlatformZhipu, PlatformDeepSeek:
+		// OpenAI-compatible domestic providers use the same API-key contract.
 		return nil
 	case PlatformGrok:
 		return nil

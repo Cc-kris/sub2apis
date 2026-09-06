@@ -185,7 +185,7 @@ import { useRoute, useRouter } from 'vue-router'
 import { useI18n } from 'vue-i18n'
 import { useAdminSettingsStore, useAppStore, useAuthStore, useOnboardingStore } from '@/stores'
 import VersionBadge from '@/components/common/VersionBadge.vue'
-import { canAccessAdminPath, canAccessCacheManagement, canAccessCacheStats, hasScopedAdminAccess, isPlatformOwnerRole, normalizeAdminViewerRole } from '@/utils/adminAccess'
+import { canAccessAdminPath, hasScopedAdminAccess, isPlatformOwnerRole, normalizeAdminViewerRole } from '@/utils/adminAccess'
 import { sanitizeSvg } from '@/utils/sanitize'
 import { FeatureFlags, makeSidebarFlag } from '@/utils/featureFlags'
 
@@ -776,18 +776,13 @@ const adminNavItems = computed((): NavItem[] => {
 
   const visible = applyFeatureFlags(baseItems).filter((item) => canAccessAdminPath(item.path, viewerRole.value))
 
-  const cacheNavTarget = canAccessCacheManagement(viewerRole.value) ? '/admin/settings/cache' : '/admin/settings/cache/stats'
-  const cacheNavLabel = canAccessCacheManagement(viewerRole.value) ? t('nav.cacheManagement') : t('admin.cacheStats.title')
-
   const settingsItem: NavItem | null = isPlatformOwnerRole(viewerRole.value)
     ? {
         path: '/admin/settings',
         label: t('nav.settings'),
         icon: CogIcon,
       }
-    : (canAccessCacheManagement(viewerRole.value) || canAccessCacheStats(viewerRole.value))
-      ? { path: cacheNavTarget, label: cacheNavLabel, icon: CogIcon }
-      : null
+    : null
 
   // 简单模式下，在系统设置前插入 API密钥
   if (authStore.isSimpleMode) {

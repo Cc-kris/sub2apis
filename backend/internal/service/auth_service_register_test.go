@@ -447,6 +447,19 @@ func TestAuthService_Register_CreateEmailExistsRace(t *testing.T) {
 	require.ErrorIs(t, err, ErrEmailExists)
 }
 
+func TestAuthService_Register_CreateDomainLimitPreservesRateLimitError(t *testing.T) {
+	repo := &userRepoStub{domainCreateErr: ErrRegistrationDomainLimit}
+	service := newAuthService(repo, map[string]string{
+		SettingKeyRegistrationEnabled:              "true",
+		SettingKeyRegistrationDomainLimitEnabled:   "true",
+		SettingKeyRegistrationDomainLimitPerDomain: "1",
+	}, nil, nil)
+
+	_, _, err := service.Register(context.Background(), "user@example.com", "password")
+	require.ErrorIs(t, err, ErrRegistrationDomainLimit)
+	require.Equal(t, 1, repo.domainCreateCalls)
+}
+
 func TestAuthService_Register_Success(t *testing.T) {
 	repo := &userRepoStub{nextID: 5}
 	service := newAuthService(repo, map[string]string{
@@ -742,6 +755,21 @@ func TestAuthService_LoginOrRegisterOAuthWithTokenPair_ExistingUserDoesNotGrantA
 	require.Equal(t, 1, user.Concurrency)
 	require.Empty(t, repo.created)
 	require.Empty(t, assigner.calls)
+}
+
+func TestAuthService_LoginOrRegisterOAuthWithTokenPair_EnforcesRegistrationDomainLimit(t *testing.T) {
+	repo := &userRepoStub{domainCreateErr: ErrRegistrationDomainLimit}
+	service := newAuthService(repo, map[string]string{
+		SettingKeyRegistrationEnabled:              "true",
+		SettingKeyRegistrationDomainLimitEnabled:   "true",
+		SettingKeyRegistrationDomainLimitPerDomain: "1",
+	}, nil, nil)
+	service.refreshTokenCache = &refreshTokenCacheStub{}
+
+	_, _, err := service.LoginOrRegisterOAuthWithTokenPair(context.Background(), "new@sub.example.com", "new", "", "", "linuxdo")
+	require.ErrorIs(t, err, ErrRegistrationDomainLimit)
+	require.Equal(t, 1, repo.domainCreateCalls)
+	require.Empty(t, repo.created)
 }
 
 // newAuthServiceWithDingTalkCfg 构建一个含完整 DingTalk config 的 AuthService，

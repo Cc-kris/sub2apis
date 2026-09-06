@@ -301,20 +301,13 @@
             </div>
           </template>
 
-          <template #cell-first_token="{ row }">
-            <span
-              v-if="row.first_token_ms != null"
-              class="text-sm text-gray-600 dark:text-gray-400"
-            >
-              {{ formatDuration(row.first_token_ms) }}
-            </span>
-            <span v-else class="text-sm text-gray-400 dark:text-gray-500">-</span>
-          </template>
-
-          <template #cell-duration="{ row }">
-            <span class="text-sm text-gray-600 dark:text-gray-400">{{
-              formatDuration(row.duration_ms)
-            }}</span>
+          <template #cell-latency_health="{ row }">
+            <UsageLatencyHealth
+              :first-token-ms="row.first_token_ms"
+              :duration-ms="row.duration_ms"
+              :first-token-label="t('usage.firstTokenShort')"
+              :duration-label="t('usage.durationTotal')"
+            />
           </template>
 
           <template #cell-created_at="{ value }">
@@ -550,9 +543,11 @@ import EmptyState from '@/components/common/EmptyState.vue'
 import Select from '@/components/common/Select.vue'
 import DateRangePicker from '@/components/common/DateRangePicker.vue'
 import Icon from '@/components/icons/Icon.vue'
+import UsageLatencyHealth from '@/components/admin/usage/UsageLatencyHealth.vue'
 import type { UsageLog, ApiKey, UsageQueryParams, UsageStatsResponse } from '@/types'
 import type { Column } from '@/components/common/types'
 import { formatDateTime, formatNumberLocaleString, formatReasoningEffort } from '@/utils/format'
+import { formatDuration } from '@/utils/duration'
 import { getPersistedPageSize } from '@/composables/usePersistedPageSize'
 import { formatCacheTokens, formatMultiplier } from '@/utils/formatters'
 import { formatTokenPricePerMillion } from '@/utils/usagePricing'
@@ -599,8 +594,7 @@ const columns = computed<Column[]>(() => [
   { key: 'billing_mode', label: t('admin.usage.billingMode'), sortable: false },
   { key: 'tokens', label: t('usage.tokens'), sortable: false },
   { key: 'cost', label: t('usage.cost'), sortable: false },
-  { key: 'first_token', label: t('usage.firstToken'), sortable: false },
-  { key: 'duration', label: t('usage.duration'), sortable: false },
+  { key: 'latency_health', label: `${t('usage.firstToken')} / ${t('usage.duration')}`, sortable: false },
   { key: 'created_at', label: t('usage.time'), sortable: true },
   { key: 'user_agent', label: t('usage.userAgent'), sortable: false }
 ])
@@ -665,11 +659,6 @@ const sortState = reactive({
   sort_by: 'created_at',
   sort_order: 'desc' as 'asc' | 'desc'
 })
-
-const formatDuration = (ms: number): string => {
-  if (ms < 1000) return `${ms.toFixed(0)}ms`
-  return `${(ms / 1000).toFixed(2)}s`
-}
 
 const imageUnitPrice = (row: UsageLog | null): number => {
   if (!row || row.image_count <= 0) return 0

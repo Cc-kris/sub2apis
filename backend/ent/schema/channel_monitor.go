@@ -1,6 +1,8 @@
 package schema
 
 import (
+	"fmt"
+
 	"github.com/Wei-Shaw/sub2api/ent/schema/mixins"
 
 	"entgo.io/ent"
@@ -35,7 +37,18 @@ func (ChannelMonitor) Fields() []ent.Field {
 			NotEmpty().
 			MaxLen(100),
 		field.Enum("provider").
-			Values("openai", "anthropic", "gemini", "grok"),
+			Values("openai", "anthropic", "gemini", "grok", "antigravity", "kimi", "zhipu", "deepseek"),
+		field.String("mode").
+			Default("active").
+			MaxLen(16).
+			Validate(func(value string) error {
+				switch value {
+				case "active", "passive", "quota":
+					return nil
+				default:
+					return fmt.Errorf("channelmonitor: invalid mode %q", value)
+				}
+			}),
 		field.String("api_mode").
 			Default("chat_completions").
 			MaxLen(32).
@@ -66,6 +79,10 @@ func (ChannelMonitor) Fields() []ent.Field {
 			Optional().
 			Nillable(),
 		field.Int64("created_by"),
+		field.Int64("account_id").
+			Optional().
+			Nillable().
+			Comment("Optional upstream account bound to passive/quota monitoring"),
 
 		// ---- 自定义请求快照字段（来自模板 / 手动编辑） ----
 
@@ -111,5 +128,6 @@ func (ChannelMonitor) Indexes() []ent.Index {
 		index.Fields("provider", "api_mode"),
 		index.Fields("group_name"),
 		index.Fields("template_id"),
+		index.Fields("account_id"),
 	}
 }

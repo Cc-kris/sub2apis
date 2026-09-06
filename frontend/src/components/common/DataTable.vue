@@ -64,6 +64,9 @@
     v-else
     ref="tableWrapperRef"
     class="table-wrapper"
+    :tabindex="isScrollable ? 0 : undefined"
+    :role="isScrollable ? 'region' : undefined"
+    :aria-label="isScrollable ? 'Scrollable table' : undefined"
     :class="{
       'actions-expanded': actionsExpanded,
       'is-scrollable': isScrollable

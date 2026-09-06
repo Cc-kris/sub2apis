@@ -265,6 +265,7 @@ func (r *financeLedgerRepository) LoadUsageAttempts(ctx context.Context, usageLo
 			InputTokens:                   row.InputTokens,
 			OutputTokens:                  row.OutputTokens,
 			CacheReadTokens:               row.CacheReadTokens,
+			CacheCreationTokens:           row.CacheCreationTokens,
 			CacheCreation5mTokens:         row.CacheCreation5mTokens,
 			CacheCreation1hTokens:         row.CacheCreation1hTokens,
 			RequestCount:                  row.RequestCount,

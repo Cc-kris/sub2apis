@@ -164,6 +164,14 @@ func NewHTTPUpstream(cfg *config.Config) service.HTTPUpstream {
 //   - 调用方必须关闭 resp.Body，否则会导致 inFlight 计数泄漏
 //   - inFlight > 0 的客户端不会被淘汰，确保活跃请求不被中断
 func (s *httpUpstreamService) Do(req *http.Request, proxyURL string, accountID int64, accountConcurrency int) (*http.Response, error) {
+	releaseDetached := detachedUpstreamRelease(req)
+	releaseOnReturn := true
+	defer func() {
+		if releaseOnReturn {
+			releaseDetached()
+		}
+	}()
+
 	applyGrokCLIProxyTransportHeaders(req)
 	if err := s.validateRequestHost(req); err != nil {
 		return nil, err
@@ -200,7 +208,12 @@ func (s *httpUpstreamService) Do(req *http.Request, proxyURL string, accountID i
 	resp.Body = wrapTrackedBody(resp.Body, func() {
 		atomic.AddInt64(&entry.inFlight, -1)
 		atomic.StoreInt64(&entry.lastUsed, time.Now().UnixNano())
+		releaseDetached()
 	})
+	if resp.Body == nil {
+		releaseDetached()
+	}
+	releaseOnReturn = false
 
 	return resp, nil
 }
@@ -213,6 +226,14 @@ func (s *httpUpstreamService) DoWithTLS(req *http.Request, proxyURL string, acco
 	if profile == nil {
 		return s.Do(req, proxyURL, accountID, accountConcurrency)
 	}
+	releaseDetached := detachedUpstreamRelease(req)
+	releaseOnReturn := true
+	defer func() {
+		if releaseOnReturn {
+			releaseDetached()
+		}
+	}()
+
 	applyGrokCLIProxyTransportHeaders(req)
 	upstreamProfile := service.HTTPUpstreamProfileDefault
 	if req != nil {
@@ -254,9 +275,23 @@ func (s *httpUpstreamService) DoWithTLS(req *http.Request, proxyURL string, acco
 	resp.Body = wrapTrackedBody(resp.Body, func() {
 		atomic.AddInt64(&entry.inFlight, -1)
 		atomic.StoreInt64(&entry.lastUsed, time.Now().UnixNano())
+		releaseDetached()
 	})
+	if resp.Body == nil {
+		releaseDetached()
+	}
+	releaseOnReturn = false
 
 	return resp, nil
+}
+
+func detachedUpstreamRelease(req *http.Request) func() {
+	if req == nil {
+		return func() {}
+	}
+	return func() {
+		service.ReleaseDetachedUpstreamContext(req.Context())
+	}
 }
 
 func httpClientForUpstreamRequest(client *http.Client, req *http.Request) *http.Client {

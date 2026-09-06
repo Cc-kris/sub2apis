@@ -88,7 +88,7 @@
                 {{ displayName }}
               </div>
               <div class="text-xs capitalize text-gray-500 dark:text-dark-400">
-                {{ user.role }}
+                {{ roleLabel }}
               </div>
             </div>
             <Icon name="chevronDown" size="sm" class="hidden text-gray-400 md:block" />
@@ -260,6 +260,13 @@ const userInitials = computed(() => {
 const displayName = computed(() => {
   if (!user.value) return ''
   return user.value.username || user.value.email?.split('@')[0] || ''
+})
+
+const roleLabel = computed(() => {
+  const role = user.value?.role?.toLowerCase()
+  if (role === 'admin') return t('profile.administrator')
+  if (role === 'user') return t('profile.user')
+  return role ? t('profile.unknownRole', { role }) : t('profile.user')
 })
 
 const pageTitle = computed(() => {

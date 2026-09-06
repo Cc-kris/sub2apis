@@ -70,6 +70,7 @@ var openaiAllowedHeaders = map[string]bool{
 	"user-agent":            true,
 	"originator":            true,
 	"session_id":            true,
+	"x-codex-beta-features": true,
 	"x-codex-turn-state":    true,
 	"x-codex-turn-metadata": true,
 }
@@ -85,6 +86,7 @@ var openaiPassthroughAllowedHeaders = map[string]bool{
 	"user-agent":            true,
 	"originator":            true,
 	"session_id":            true,
+	"x-codex-beta-features": true,
 	"x-codex-turn-state":    true,
 	"x-codex-turn-metadata": true,
 }
@@ -407,6 +409,8 @@ type OpenAIGatewayService struct {
 	settingService        *SettingService
 	userPlatformQuotaRepo UserPlatformQuotaRepository
 	idempotencyRepo       IdempotencyRepository
+	cnQuotaService        *CNProviderQuotaService
+	gatewayTelemetry      GatewayTelemetryRecorder
 
 	openaiWSPoolOnce              sync.Once
 	openaiWSStateStoreOnce        sync.Once
@@ -422,6 +426,7 @@ type OpenAIGatewayService struct {
 	openaiWSFallbackUntil               sync.Map // key: int64(accountID), value: time.Time
 	openaiHTTPRetryOnce                 sync.Map // key: int64(accountID), value: struct{}; prevents recursive stream reconnect retry
 	openaiAccountRuntimeBlockUntil      sync.Map // key: int64(accountID), value: time.Time
+	openaiTeamRuntimeBlockUntil         sync.Map // key: chatgpt_account_id, value: time.Time
 	openaiAccountRuntimeBlockLocks      sync.Map // key: int64(accountID), value: *sync.Mutex
 	openaiAccountRuntimeBlockGeneration sync.Map // key: int64(accountID), value: uint64
 	openaiAccountRuntimeBlockSequence   atomic.Uint64
@@ -438,6 +443,38 @@ type OpenAIGatewayService struct {
 	localResponseCacheMinuteStatsOnce   sync.Once
 	localResponseCacheMinuteStatsQueue  chan LocalResponseCacheMinuteStatEvent
 	semanticCacheWriter                 *SemanticCacheAsyncWriter
+}
+
+func (s *OpenAIGatewayService) SetCNProviderQuotaService(quota *CNProviderQuotaService) {
+	if s != nil {
+		s.cnQuotaService = quota
+	}
+}
+
+// SetGatewayTelemetryRecorder wires passive monitor aggregation without
+// changing the OpenAI service constructor dependency graph.
+func (s *OpenAIGatewayService) SetGatewayTelemetryRecorder(recorder GatewayTelemetryRecorder) {
+	if s != nil {
+		s.gatewayTelemetry = recorder
+	}
+}
+
+// IsOpenAIRemoteCompactionV2Enabled exposes the V2 runtime switch to gateway
+// handlers while keeping setting-store access inside the service layer.
+func (s *OpenAIGatewayService) IsOpenAIRemoteCompactionV2Enabled(ctx context.Context) bool {
+	if s == nil || s.settingService == nil {
+		return true
+	}
+	return s.settingService.IsOpenAIRemoteCompactionV2Enabled(ctx)
+}
+
+// IsOpenAITeamLinkedResolverEnabled exposes the Team rollback switch to the
+// gateway handler without coupling handlers to the settings repository.
+func (s *OpenAIGatewayService) IsOpenAITeamLinkedResolverEnabled(ctx context.Context) bool {
+	if s == nil || s.settingService == nil {
+		return true
+	}
+	return s.settingService.IsOpenAITeamLinkedResolverEnabled(ctx)
 }
 
 // NewOpenAIGatewayService creates a new OpenAIGatewayService
@@ -1308,6 +1345,50 @@ func (s *OpenAIGatewayService) GenerateSessionHash(c *gin.Context, body []byte) 
 	return currentHash
 }
 
+// GenerateHTTPStableSessionHash builds the sticky routing key for HTTP
+// OpenAI-compatible requests. Explicit client session signals retain their
+// existing semantics. When a client omits those signals, route by its stable
+// prompt prefix instead of the first user turn so later turns stay on the
+// upstream account that owns the prompt cache. If no reusable prefix exists
+// (for example, a client sends only the current user turn), fall back to a
+// deterministic API-key/model affinity key rather than hashing request
+// content, which would create a new sticky account on every turn.
+//
+// The API key and model are included only for this compatibility fallback:
+// they prevent unrelated tenants or model families from sharing a route while
+// leaving legacy explicit-session bindings untouched.
+func (s *OpenAIGatewayService) GenerateHTTPStableSessionHash(c *gin.Context, body []byte) string {
+	if c == nil {
+		return ""
+	}
+	if explicitOpenAIRequestSessionID(c, body) != "" {
+		return s.GenerateSessionHash(c, body)
+	}
+
+	stablePrefix := deriveOpenAIStablePrefixSessionSeed(body)
+	apiKeyID := getAPIKeyIDFromContext(c)
+	model := strings.TrimSpace(gjson.GetBytes(body, "model").String())
+	if stablePrefix == "" {
+		// Authenticated HTTP requests always carry an API key. Do not create a
+		// shared anonymous affinity bucket when the middleware context is absent.
+		if apiKeyID <= 0 {
+			return ""
+		}
+		stablePrefix = "fallback"
+	}
+
+	seed := fmt.Sprintf("openai_http_responses_cache_affinity:v2:key=%d:model=%s:%s", apiKeyID, model, stablePrefix)
+	currentHash, legacyHash := deriveOpenAISessionHashes(seed)
+	attachOpenAILegacySessionHashToGin(c, legacyHash)
+	return currentHash
+}
+
+// GenerateHTTPResponsesSessionHash is kept as a compatibility wrapper for
+// callers and tests that use the original Responses-specific name.
+func (s *OpenAIGatewayService) GenerateHTTPResponsesSessionHash(c *gin.Context, body []byte) string {
+	return s.GenerateHTTPStableSessionHash(c, body)
+}
+
 // GenerateSessionHashWithFallback 先按常规信号生成会话哈希；
 // 当未携带 session_id/conversation_id/prompt_cache_key 时，使用 fallbackSeed 生成稳定哈希。
 // 该方法用于 WS ingress，避免会话信号缺失时发生跨账号漂移。
@@ -2026,6 +2107,9 @@ func (s *OpenAIGatewayService) recheckSelectedOpenAIAccountFromDB(ctx context.Co
 		if !isOpenAIAccountEligibleForRequest(account, requestedModel, requireCompact) {
 			return nil
 		}
+		if s.isOpenAITeamDurablyBlocked(ctx, account) {
+			return nil
+		}
 		return account
 	}
 
@@ -2036,10 +2120,38 @@ func (s *OpenAIGatewayService) recheckSelectedOpenAIAccountFromDB(ctx context.Co
 	if !isOpenAIAccountEligibleForRequest(latest, requestedModel, requireCompact) {
 		return nil
 	}
+	if s.isOpenAITeamDurablyBlocked(ctx, latest) {
+		return nil
+	}
 	if s.isOpenAIAccountRuntimeBlocked(latest) {
 		return nil
 	}
 	return latest
+}
+
+// isOpenAITeamDurablyBlocked closes the interval between another instance
+// writing a Team block and this instance consuming its scheduler outbox. The
+// scheduler snapshot is intentionally eventually consistent, while a Team
+// workspace block must take effect across every instance before selection.
+func (s *OpenAIGatewayService) isOpenAITeamDurablyBlocked(ctx context.Context, account *Account) bool {
+	if s == nil || s.rateLimitService == nil || account == nil {
+		return false
+	}
+	teamID := account.GetChatGPTAccountID()
+	if teamID == "" {
+		return false
+	}
+	checkCtx, cancel := openAIAccountStateContext(ctx)
+	defer cancel()
+	active, err := s.rateLimitService.HasActiveOpenAITeamBlockForTeam(checkCtx, teamID)
+	if err != nil {
+		// Durable state is the source of truth. Do not route through a Team when
+		// it cannot be checked, because the alternative can bypass a workspace
+		// circuit breaker on another application instance.
+		slog.Error("openai_team_workspace_selection_check_failed", "account_id", account.ID, "team_id", teamID, "error", err)
+		return true
+	}
+	return active
 }
 
 func (s *OpenAIGatewayService) getSchedulableAccount(ctx context.Context, accountID int64) (*Account, error) {
@@ -2068,6 +2180,9 @@ func (s *OpenAIGatewayService) hydrateSelectedAccount(ctx context.Context, accou
 	}
 	if hydrated == nil {
 		return nil, fmt.Errorf("selected openai account %d not found during hydration", account.ID)
+	}
+	if s.isOpenAITeamDurablyBlocked(ctx, hydrated) {
+		return nil, fmt.Errorf("selected openai account %d belongs to a blocked Team workspace", account.ID)
 	}
 	return hydrated, nil
 }
@@ -2181,7 +2296,7 @@ func (s *OpenAIGatewayService) shouldRetryOpenAIHTTPStreamFailover(accountID int
 	if !errors.As(err, &failoverErr) || failoverErr == nil || !failoverErr.RetryableOnSameAccount {
 		return false
 	}
-	if failoverErr.StatusCode != 0 && failoverErr.StatusCode != http.StatusBadGateway {
+	if failoverErr.StatusCode != 0 && failoverErr.StatusCode != http.StatusBadGateway && failoverErr.StatusCode != http.StatusTooManyRequests {
 		return false
 	}
 	_, loaded := s.openaiHTTPRetryOnce.LoadOrStore(accountID, struct{}{})
@@ -2222,6 +2337,10 @@ func (s *OpenAIGatewayService) Forward(ctx context.Context, c *gin.Context, acco
 	originalModel := reqModel
 	if account.IsGrok() {
 		return s.forwardGrokResponses(ctx, c, account, body, originalModel, reqStream, startTime)
+	}
+	if (account.Platform == PlatformKimi || account.Platform == PlatformZhipu) ||
+		(account.Platform == PlatformDeepSeek && !account.UsesNativeResponsesForDomesticProvider()) {
+		return s.forwardResponsesViaRawChatCompletions(ctx, c, account, body)
 	}
 
 	if account.Type == AccountTypeAPIKey && !openai_compat.ShouldUseResponsesAPI(account.Extra) {
@@ -2359,8 +2478,10 @@ func (s *OpenAIGatewayService) Forward(ctx context.Context, c *gin.Context, acco
 		logger.LegacyPrintf("service.openai_gateway", "[OpenAI] Removed /responses image_generation tool declaration for disabled group")
 	}
 
-	// 非透传模式下，instructions 为空时注入默认指令。
-	if isInstructionsEmpty(reqBody) && !compatMessagesBridge {
+	// 只有 Codex OAuth 协议需要网关补齐默认 instructions。官方 OpenAI
+	// API-key/兼容上游应保留客户端原始请求；额外注入一段系统指令会改变
+	// 上游 prompt-cache 前缀，并可能让上游重新做完整推理。
+	if isInstructionsEmpty(reqBody) && account.IsOpenAIOAuth() && !compatMessagesBridge {
 		reqBody["instructions"] = "You are a helpful coding assistant."
 		bodyModified = true
 		markPatchSet("instructions", "You are a helpful coding assistant.")
@@ -2513,13 +2634,10 @@ func (s *OpenAIGatewayService) Forward(ctx context.Context, c *gin.Context, acco
 		if maxOutputTokens, hasMaxOutputTokens := reqBody["max_output_tokens"]; hasMaxOutputTokens {
 			switch account.Platform {
 			case PlatformOpenAI:
-				// For OpenAI API Key, remove max_output_tokens (not supported)
-				// For OpenAI OAuth (Responses API), keep it (supported)
-				if account.Type == AccountTypeAPIKey {
-					delete(reqBody, "max_output_tokens")
-					bodyModified = true
-					markPatchDelete("max_output_tokens")
-				}
+				// Responses-native OpenAI upstreams support max_output_tokens for
+				// both OAuth and API-key accounts. Preserve the client's explicit
+				// output bound; removing it lets the upstream select a much larger
+				// default and needlessly extends generation time.
 			case PlatformAnthropic:
 				// For Anthropic (Claude), convert to max_tokens
 				delete(reqBody, "max_output_tokens")
@@ -3377,7 +3495,7 @@ func (s *OpenAIGatewayService) buildUpstreamRequestOpenAIPassthrough(
 	case AccountTypeOAuth:
 		targetURL = chatgptCodexURL
 	case AccountTypeAPIKey:
-		baseURL := account.GetOpenAIBaseURL()
+		baseURL := account.GetOpenAIBaseURLForProtocol(OpenAIAPIProtocolResponses)
 		if baseURL != "" {
 			validatedURL, err := s.validateUpstreamBaseURL(baseURL)
 			if err != nil {
@@ -3469,6 +3587,7 @@ func (s *OpenAIGatewayService) buildUpstreamRequestOpenAIPassthrough(
 	if account.Type == AccountTypeOAuth && !openai.IsCodexCLIRequest(req.Header.Get("user-agent")) {
 		req.Header.Set("user-agent", codexCLIUserAgent)
 	}
+	resolveOpenAIAgentIdentity(account).ApplyTo(req.Header, nil)
 
 	// 浏览器型 UA 兜底：仅 OAuth（ChatGPT 内部接口）账号生效，若最终 user-agent 仍为浏览器
 	// （Chrome/Firefox/Safari/Edge 等），替换为后台配置的 Codex UA，避免 Cloudflare 触发 JS 质询。
@@ -4134,7 +4253,7 @@ func (s *OpenAIGatewayService) buildUpstreamRequest(ctx context.Context, c *gin.
 		targetURL = chatgptCodexURL
 	case AccountTypeAPIKey:
 		// API Key accounts use Platform API or custom base URL
-		baseURL := account.GetOpenAIBaseURL()
+		baseURL := account.GetOpenAIBaseURLForProtocol(OpenAIAPIProtocolResponses)
 		if baseURL == "" {
 			targetURL = openaiPlatformAPIURL
 		} else {
@@ -4217,6 +4336,7 @@ func (s *OpenAIGatewayService) buildUpstreamRequest(ctx context.Context, c *gin.
 	if customUA != "" {
 		req.Header.Set("user-agent", customUA)
 	}
+	resolveOpenAIAgentIdentity(account).ApplyTo(req.Header, nil)
 
 	// 若开启 ForceCodexCLI，则强制将上游 User-Agent 伪装为 Codex CLI。
 	// 用于网关未透传/改写 User-Agent 时，仍能命中 Codex 侧识别逻辑。
@@ -4299,6 +4419,14 @@ func (s *OpenAIGatewayService) handleErrorResponse(
 			account.Type,
 			truncateForLog(body, s.cfg.Gateway.LogUpstreamErrorBodyMaxBytes),
 		)
+	}
+	// Passthrough rules alter only the client response; they cannot bypass a
+	// Team-wide circuit breaker by returning before normal error handling.
+	if s.rateLimitService != nil {
+		if s.rateLimitService.HandleOpenAITeamWorkspaceDeactivation(ctx, account, resp.StatusCode, resp.Header, body) {
+			ctx = MarkOpenAITeamWorkspaceDeactivationHandled(ctx)
+			c.Request = c.Request.WithContext(ctx)
+		}
 	}
 
 	if status, errType, errMsg, matched := applyErrorPassthroughRule(
@@ -4453,6 +4581,15 @@ func (s *OpenAIGatewayService) handleCompatErrorResponse(
 		upstreamDetail = truncateString(string(body), maxBytes)
 	}
 	setOpsUpstreamError(c, resp.StatusCode, upstreamMsg, upstreamDetail)
+
+	// Keep Team workspace protection independent from format-specific error
+	// writers and the passthrough rule immediately below.
+	if s.rateLimitService != nil {
+		ctx := c.Request.Context()
+		if s.rateLimitService.HandleOpenAITeamWorkspaceDeactivation(ctx, account, resp.StatusCode, resp.Header, body) {
+			c.Request = c.Request.WithContext(MarkOpenAITeamWorkspaceDeactivationHandled(ctx))
+		}
+	}
 
 	// Apply error passthrough rules
 	if status, errType, errMsg, matched := applyErrorPassthroughRule(
@@ -5996,7 +6133,19 @@ type OpenAIRecordUsageInput struct {
 	APIKeyService          APIKeyQuotaUpdater
 	UpstreamCostMultiplier *decimal.Decimal // 账号选中时的上游采购倍率快照
 	UpstreamAttempts       []UsageUpstreamAttempt
+	// FixedRequestPrice freezes a per-request sales price for special gateway
+	// capabilities such as x_search. Nil keeps the normal token pricing path.
+	FixedRequestPrice *decimal.Decimal
 	ChannelUsageFields
+}
+
+// XSearchPricePerRequest returns the configured x_search unit price. An empty
+// string means the capability is not enabled for billing.
+func (s *OpenAIGatewayService) XSearchPricePerRequest(ctx context.Context) (string, error) {
+	if s == nil || s.settingService == nil {
+		return "", errors.New("x_search price service is unavailable")
+	}
+	return s.settingService.GetXSearchPricePerRequest(ctx)
 }
 
 // RecordUsage records usage and deducts balance
@@ -6100,6 +6249,13 @@ func (s *OpenAIGatewayService) RecordUsage(ctx context.Context, input *OpenAIRec
 			zap.Int64("account_id", account.ID),
 		).Warn("openai_usage.pricing_missing_record_zero_cost", zap.Error(err))
 		cost = &CostBreakdown{BillingMode: string(BillingModeToken)}
+	}
+	xSearchBilling, err := newXSearchBillingSnapshot(input.FixedRequestPrice)
+	if err != nil {
+		return err
+	}
+	if xSearchBilling != nil {
+		cost = xSearchBilling.cost()
 	}
 
 	// Determine billing type
@@ -6232,8 +6388,11 @@ func (s *OpenAIGatewayService) RecordUsage(ctx context.Context, input *OpenAIRec
 		intSnapshotValue(usageLog.VideoDurationSeconds),
 		cost,
 		decimal.NewFromFloat(usageLog.RateMultiplier),
+		s.settingService,
 	)
-	if pricingErr != nil {
+	if xSearchBilling != nil {
+		xSearchBilling.apply(usageLog)
+	} else if pricingErr != nil {
 		logger.L().With(zap.String("component", "service.openai_gateway"), zap.String("billing_model", billingModel)).Warn("usage.sales_pricing_snapshot_failed", zap.Error(pricingErr))
 	} else {
 		appliedCost, applyErr := ApplyConfiguredSalesPricing(
@@ -6256,6 +6415,7 @@ func (s *OpenAIGatewayService) RecordUsage(ctx context.Context, input *OpenAIRec
 	}
 
 	if s.cfg != nil && s.cfg.RunMode == config.RunModeSimple {
+		s.recordGatewayTelemetry(ctx, input, result)
 		writeUsageLogBestEffort(ctx, s.usageLogRepo, usageLog, "service.openai_gateway")
 		logger.LegacyPrintf("service.openai_gateway", "[SIMPLE MODE] Usage recorded (not billed): user=%d, tokens=%d", usageLog.UserID, usageLog.TotalTokens())
 		s.deferredService.ScheduleLastUsedUpdate(account.ID)
@@ -6282,11 +6442,24 @@ func (s *OpenAIGatewayService) RecordUsage(ctx context.Context, input *OpenAIRec
 		return billingErr
 	}
 	writeUsageLogBestEffort(ctx, s.usageLogRepo, usageLog, "service.openai_gateway")
+	s.recordGatewayTelemetry(ctx, input, result)
 
 	return nil
 }
 
+func (s *OpenAIGatewayService) recordGatewayTelemetry(ctx context.Context, input *OpenAIRecordUsageInput, result *OpenAIForwardResult) {
+	if s == nil || s.gatewayTelemetry == nil || input == nil || input.Account == nil || result == nil {
+		return
+	}
+	if err := s.gatewayTelemetry.RecordGatewayTelemetry(ctx, input.Account.ID, result.UpstreamModel, "operational", int(result.Duration.Milliseconds()), time.Now().UTC()); err != nil {
+		logger.L().With(zap.String("component", "service.openai_gateway"), zap.Int64("account_id", input.Account.ID)).Warn("channel_monitor.gateway_telemetry_failed", zap.Error(err))
+	}
+}
+
 func (s *OpenAIGatewayService) shouldBillOpenAINonImageResultAsRequestedText(ctx context.Context, result *OpenAIForwardResult, apiKey *APIKey, input *OpenAIRecordUsageInput) bool {
+	if s.settingService != nil && !s.settingService.IsSalesPricingResolverEnabled(ctx) {
+		return false
+	}
 	if s == nil || s.resolver == nil || result == nil || input == nil || apiKey == nil || apiKey.Group == nil {
 		return false
 	}
@@ -6487,7 +6660,7 @@ func (s *OpenAIGatewayService) calculateOpenAIRecordUsageTokenCost(
 	tokens UsageTokens,
 	serviceTier string,
 ) (*CostBreakdown, error) {
-	if s.resolver != nil && apiKey.Group != nil {
+	if (s.settingService == nil || s.settingService.IsSalesPricingResolverEnabled(ctx)) && s.resolver != nil && apiKey.Group != nil {
 		gid := apiKey.Group.ID
 		return s.billingService.CalculateCostUnified(CostInput{
 			Ctx:            ctx,
@@ -6585,6 +6758,9 @@ func (s *OpenAIGatewayService) calculateOpenAIVideoCost(
 }
 
 func (s *OpenAIGatewayService) resolveOpenAIChannelPricing(ctx context.Context, billingModel string, apiKey *APIKey) *ResolvedPricing {
+	if s.settingService != nil && !s.settingService.IsSalesPricingResolverEnabled(ctx) {
+		return nil
+	}
 	if s.resolver == nil || apiKey == nil || apiKey.Group == nil {
 		return nil
 	}

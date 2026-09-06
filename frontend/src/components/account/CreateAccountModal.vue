@@ -173,6 +173,35 @@
             <PlatformIcon platform="grok" size="sm" />
             Grok
           </button>
+          <button
+            v-for="provider in [
+              { id: 'kimi', label: 'Kimi' },
+              { id: 'zhipu', label: '智谱' },
+              { id: 'deepseek', label: 'DeepSeek' }
+            ]"
+            :key="provider.id"
+            type="button"
+            @click="form.platform = provider.id as AccountPlatform"
+            :class="[
+              'flex flex-1 items-center justify-center gap-2 rounded-md px-4 py-2.5 text-sm font-medium transition-all',
+              form.platform === provider.id
+                ? 'bg-white text-primary-600 shadow-sm dark:bg-dark-600 dark:text-primary-400'
+                : 'text-gray-600 hover:text-gray-900 dark:text-gray-400 dark:hover:text-gray-200'
+            ]"
+          >
+            <Icon name="globe" size="sm" />
+            {{ provider.label }}
+          </button>
+          <button
+            type="button"
+            @click="form.platform = 'ollama'"
+            :class="[
+              'flex flex-1 items-center justify-center gap-2 rounded-md px-4 py-2.5 text-sm font-medium transition-all',
+              form.platform === 'ollama' ? 'bg-white text-gray-900 shadow-sm dark:bg-dark-600 dark:text-white' : 'text-gray-600 hover:text-gray-900 dark:text-gray-400 dark:hover:text-gray-200'
+            ]"
+          >
+            Ollama Cloud
+          </button>
         </div>
       </div>
 
@@ -1094,7 +1123,10 @@
       </div>
 
       <!-- API Key input (only for apikey type, excluding Antigravity which has its own fields) -->
-      <div v-if="form.type === 'apikey' && form.platform !== 'antigravity'" class="space-y-4">
+      <div
+        v-if="(form.type === 'apikey' || isDomesticOpenAICompatiblePlatform(form.platform)) && form.platform !== 'antigravity'"
+        class="space-y-4"
+      >
         <div>
           <label class="input-label">{{ t('admin.accounts.baseUrl') }}</label>
           <input
@@ -1110,6 +1142,12 @@
                     ? 'https://api.x.ai/v1'
                     : form.platform === 'seedace'
                       ? 'https://ai.silkroadai.io/v1'
+                      : form.platform === 'kimi'
+                        ? 'https://api.moonshot.cn'
+                        : form.platform === 'zhipu'
+                          ? 'https://open.bigmodel.cn/api/paas'
+                          : form.platform === 'deepseek'
+                            ? 'https://api.deepseek.com'
                       : 'https://api.anthropic.com'
             "
           />
@@ -1140,6 +1178,20 @@
             "
           />
           <p class="input-hint">{{ apiKeyHint }}</p>
+        </div>
+
+        <div v-if="isDomesticOpenAICompatiblePlatform(form.platform)" class="space-y-3 rounded-lg bg-gray-50 p-4 dark:bg-dark-700/50">
+          <label class="input-label">协议模式</label>
+          <select v-model="apiProtocol" class="input">
+            <option value="adaptive">自适应（推荐）</option>
+            <option value="chat_completions">Chat Completions</option>
+            <option value="anthropic">Anthropic Messages</option>
+            <option value="responses">Responses</option>
+          </select>
+          <p class="input-hint">固定 Anthropic 使用对应 Messages 地址；DeepSeek Responses 使用对应地址；Kimi/智谱 Responses 经 Chat 地址受控桥接。</p>
+          <input v-model.trim="apiBaseUrls.chat_completions" type="url" class="input" placeholder="Chat Completions endpoint base URL" />
+          <input v-model.trim="apiBaseUrls.anthropic" type="url" class="input" placeholder="Anthropic Messages endpoint base URL" />
+          <input v-model.trim="apiBaseUrls.responses" type="url" class="input" placeholder="Responses endpoint base URL（仅 DeepSeek 原生使用）" />
         </div>
 
         <!-- Gemini API Key tier selection -->
@@ -2871,6 +2923,19 @@
         </div>
       </div>
 
+      <div
+        v-if="form.platform === 'openai' && accountCategory === 'oauth-based'"
+        class="border-t border-gray-200 pt-4 dark:border-dark-600"
+      >
+        <label class="input-label">{{ t('admin.accounts.openai.codexIdentityMode') }}</label>
+        <p class="input-hint">{{ t('admin.accounts.openai.codexIdentityModeDesc') }}</p>
+        <Select
+          v-model="codexIdentityMode"
+          :options="codexIdentityModeOptions"
+          data-testid="codex-identity-mode-select"
+        />
+      </div>
+
       <!-- OpenAI Compact 能力配置 -->
       <div
         v-if="form.platform === 'openai' && (accountCategory === 'oauth-based' || accountCategory === 'apikey')"
@@ -3584,6 +3649,32 @@ const accountCategory = ref<'oauth-based' | 'apikey' | 'bedrock' | 'service_acco
 const addMethod = ref<AddMethod>('oauth') // For oauth-based: 'oauth' or 'setup-token'
 const apiKeyBaseUrl = ref('https://api.anthropic.com')
 const apiKeyValue = ref('')
+const apiProtocol = ref<'adaptive' | 'chat_completions' | 'anthropic' | 'responses'>('adaptive')
+const apiBaseUrls = reactive({ chat_completions: '', anthropic: '', responses: '' })
+
+const isDomesticOpenAICompatiblePlatform = (platform: AccountPlatform): boolean =>
+  platform === 'kimi' || platform === 'zhipu' || platform === 'deepseek'
+
+const defaultAPIKeyBaseURL = (platform: AccountPlatform): string => {
+  switch (platform) {
+    case 'openai':
+      return 'https://api.openai.com'
+    case 'gemini':
+      return 'https://generativelanguage.googleapis.com'
+    case 'grok':
+      return 'https://api.x.ai/v1'
+    case 'seedace':
+      return 'https://ai.silkroadai.io/v1'
+    case 'kimi':
+      return 'https://api.moonshot.cn'
+    case 'zhipu':
+      return 'https://open.bigmodel.cn/api/paas'
+    case 'deepseek':
+      return 'https://api.deepseek.com'
+    default:
+      return 'https://api.anthropic.com'
+  }
+}
 const editQuotaLimit = ref<number | null>(null)
 const editQuotaDailyLimit = ref<number | null>(null)
 const editQuotaWeeklyLimit = ref<number | null>(null)
@@ -3648,6 +3739,7 @@ const openAIStructuredOutputMode = ref<OpenAIStructuredOutputMode>('native')
 const openaiOAuthResponsesWebSocketV2Mode = ref<OpenAIWSMode>(OPENAI_WS_MODE_OFF)
 const openaiAPIKeyResponsesWebSocketV2Mode = ref<OpenAIWSMode>(OPENAI_WS_MODE_OFF)
 const codexCLIOnlyEnabled = ref(false)
+const codexIdentityMode = ref<'disabled' | 'device' | 'session' | 'full'>('disabled')
 const anthropicPassthroughEnabled = ref(false)
 const seedaceUrlRelayEnabled = ref(true)
 const webSearchEmulationMode = ref('default')
@@ -3707,6 +3799,12 @@ const openAIResponsesModeOptions = computed(() => [
   { value: 'auto', label: t('admin.accounts.openai.responsesModeAuto') },
   { value: 'force_responses', label: t('admin.accounts.openai.responsesModeForceResponses') },
   { value: 'force_chat_completions', label: t('admin.accounts.openai.responsesModeForceChatCompletions') }
+])
+const codexIdentityModeOptions = computed(() => [
+  { value: 'disabled', label: t('admin.accounts.openai.codexIdentityModeDisabled') },
+  { value: 'device', label: t('admin.accounts.openai.codexIdentityModeDevice') },
+  { value: 'session', label: t('admin.accounts.openai.codexIdentityModeSession') },
+  { value: 'full', label: t('admin.accounts.openai.codexIdentityModeFull') }
 ])
 const openAIStructuredOutputModeOptions = computed(() => [
   { value: 'native', label: t('admin.accounts.openai.structuredOutputModeNative') },
@@ -3879,6 +3977,11 @@ const form = reactive({
 
 // Helper to check if current type needs OAuth flow
 const isOAuthFlow = computed(() => {
+  // 国产 OpenAI-compatible 上游只支持 API Key。即使平台切换后的
+  // 响应式同步尚未完成，也不能短暂进入 OAuth 第二步。
+  if (isDomesticOpenAICompatiblePlatform(form.platform)) {
+    return false
+  }
   // Antigravity upstream 类型不需要 OAuth 流程
   if (form.platform === 'antigravity' && antigravityAccountType.value === 'upstream') {
     return false
@@ -3995,16 +4098,11 @@ watch(
   () => form.platform,
   (newPlatform) => {
     // Reset base URL based on platform
-    apiKeyBaseUrl.value =
-      (newPlatform === 'openai')
-        ? 'https://api.openai.com'
-        : newPlatform === 'gemini'
-          ? 'https://generativelanguage.googleapis.com'
-          : newPlatform === 'grok'
-            ? 'https://api.x.ai/v1'
-            : newPlatform === 'seedace'
-              ? 'https://ai.silkroadai.io/v1'
-              : 'https://api.anthropic.com'
+    apiKeyBaseUrl.value = defaultAPIKeyBaseURL(newPlatform)
+    apiProtocol.value = 'adaptive'
+    apiBaseUrls.chat_completions = apiKeyBaseUrl.value
+    apiBaseUrls.anthropic = apiKeyBaseUrl.value
+    apiBaseUrls.responses = ''
     // Clear model-related settings
     allowedModels.value = []
     modelMappings.value = []
@@ -4018,6 +4116,14 @@ watch(
       accountCategory.value = 'oauth-based'
       antigravityAccountType.value = 'oauth'
     } else if (newPlatform === 'seedace') {
+      accountCategory.value = 'apikey'
+      addMethod.value = 'oauth'
+      allowOverages.value = false
+      antigravityWhitelistModels.value = []
+      antigravityModelMappings.value = []
+      antigravityModelRestrictionMode.value = 'mapping'
+    } else if (isDomesticOpenAICompatiblePlatform(newPlatform)) {
+      // 这三个上游仅支持 API Key；避免保留上一个平台的 OAuth 步骤状态。
       accountCategory.value = 'apikey'
       addMethod.value = 'oauth'
       allowOverages.value = false
@@ -4064,6 +4170,7 @@ watch(
       openaiOAuthResponsesWebSocketV2Mode.value = OPENAI_WS_MODE_OFF
       openaiAPIKeyResponsesWebSocketV2Mode.value = OPENAI_WS_MODE_OFF
       codexCLIOnlyEnabled.value = false
+      codexIdentityMode.value = 'disabled'
     }
     if (newPlatform !== 'anthropic') {
       anthropicPassthroughEnabled.value = false
@@ -4435,6 +4542,10 @@ const resetForm = () => {
   addMethod.value = 'oauth'
   apiKeyBaseUrl.value = 'https://api.anthropic.com'
   apiKeyValue.value = ''
+  apiProtocol.value = 'adaptive'
+  apiBaseUrls.chat_completions = ''
+  apiBaseUrls.anthropic = ''
+  apiBaseUrls.responses = ''
   editQuotaLimit.value = null
   editQuotaDailyLimit.value = null
   editQuotaWeeklyLimit.value = null
@@ -4547,6 +4658,11 @@ const buildOpenAIExtra = (base?: Record<string, unknown>): Record<string, unknow
     extra.codex_cli_only = true
   } else {
     delete extra.codex_cli_only
+  }
+  if (accountCategory.value === 'oauth-based' && codexIdentityMode.value !== 'disabled') {
+    extra.codex_identity_mode = codexIdentityMode.value
+  } else {
+    delete extra.codex_identity_mode
   }
   if (openAICompactMode.value !== 'auto') {
     extra.openai_compact_mode = openAICompactMode.value
@@ -4694,6 +4810,13 @@ const handleSubmit = async () => {
     return
   }
 
+  // 平台切换与提交可能发生在同一个事件循环内，显式锁定国产上游为 API Key，
+  // 避免提交 payload 仍带有上一个平台遗留的 OAuth 类型。
+  if (isDomesticOpenAICompatiblePlatform(form.platform)) {
+    accountCategory.value = 'apikey'
+    form.type = 'apikey'
+  }
+
   // For OAuth-based type, handle OAuth flow (goes to step 2)
   if (isOAuthFlow.value) {
     if (!isGrokSSOInputMethod.value && !form.name.trim()) {
@@ -4835,22 +4958,21 @@ const handleSubmit = async () => {
     return
   }
 
-  // Determine default base URL based on platform
-  const defaultBaseUrl =
-    form.platform === 'openai'
-      ? 'https://api.openai.com'
-      : form.platform === 'gemini'
-        ? 'https://generativelanguage.googleapis.com'
-        : form.platform === 'grok'
-          ? 'https://api.x.ai/v1'
-          : form.platform === 'seedace'
-            ? 'https://ai.silkroadai.io/v1'
-        : 'https://api.anthropic.com'
+  const defaultBaseUrl = defaultAPIKeyBaseURL(form.platform)
 
   // Build credentials with optional model mapping
   const credentials: Record<string, unknown> = {
     base_url: apiKeyBaseUrl.value.trim() || defaultBaseUrl,
     api_key: apiKeyValue.value.trim()
+  }
+  if (isDomesticOpenAICompatiblePlatform(form.platform)) {
+    credentials.api_protocol = apiProtocol.value
+    const baseURLs: Record<string, string> = {
+      chat_completions: apiBaseUrls.chat_completions.trim() || apiKeyBaseUrl.value.trim(),
+      anthropic: apiBaseUrls.anthropic.trim() || apiKeyBaseUrl.value.trim(),
+    }
+    if (apiBaseUrls.responses.trim()) baseURLs.responses = apiBaseUrls.responses.trim()
+    credentials.api_base_urls = baseURLs
   }
   if (form.platform === 'gemini') {
     credentials.tier_id = geminiTierAIStudio.value

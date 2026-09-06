@@ -91,10 +91,22 @@ func (g *Group) ResolveMessagesDispatchModel(requestedModel string) string {
 }
 
 func sanitizeGroupMessagesDispatchFields(g *Group) {
-	if g == nil || g.Platform == PlatformOpenAI {
+	if g == nil {
+		return
+	}
+	if isDomesticOpenAICompatiblePlatform(g.Platform) {
+		// 这三个平台只支持 API Key；不保存看似生效、实际无可选账号的过滤条件。
+		g.RequireOAuthOnly = false
+		g.RequirePrivacySet = false
+	}
+	if supportsMessagesDispatchPlatform(g.Platform) {
 		return
 	}
 	g.AllowMessagesDispatch = false
 	g.DefaultMappedModel = ""
 	g.MessagesDispatchModelConfig = OpenAIMessagesDispatchModelConfig{}
+}
+
+func supportsMessagesDispatchPlatform(platform string) bool {
+	return platform == PlatformOpenAI || isDomesticOpenAICompatiblePlatform(platform)
 }

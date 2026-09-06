@@ -29,6 +29,7 @@ type ChannelMonitorRepository interface {
 	ListEnabled(ctx context.Context) ([]*ChannelMonitor, error)
 	MarkChecked(ctx context.Context, id int64, checkedAt time.Time) error
 	InsertHistoryBatch(ctx context.Context, rows []*ChannelMonitorHistoryRow) error
+	RecordGatewayTelemetry(ctx context.Context, accountID int64, model, status string, latencyMs int, checkedAt time.Time) error
 	DeleteHistoryBefore(ctx context.Context, before time.Time) (int64, error)
 
 	// 历史记录
@@ -60,21 +61,35 @@ type ChannelMonitorRepository interface {
 	UpdateAggregationWatermark(ctx context.Context, date time.Time) error
 }
 
+// GatewayTelemetryRecorder is the narrow passive-monitor sink used by gateway
+// usage paths. It exposes no credentials or request bodies.
+type GatewayTelemetryRecorder interface {
+	RecordGatewayTelemetry(ctx context.Context, accountID int64, model, status string, latencyMs int, checkedAt time.Time) error
+}
+
 // ChannelMonitorService 渠道监控管理服务。
 type ChannelMonitorService struct {
-	repo        ChannelMonitorRepository
-	accountRepo AccountRepository
-	encryptor   SecretEncryptor
+	repo         ChannelMonitorRepository
+	accountRepo  AccountRepository
+	usageService *AccountUsageService
+	encryptor    SecretEncryptor
 	// scheduler 由 wire 通过 SetScheduler 注入；CRUD 后调用对应钩子即时同步任务。
 	// 测试或未注入场景下保持 nil，所有钩子调用变为 no-op。
 	scheduler MonitorScheduler
 }
 
+func (s *ChannelMonitorService) SetUsageService(usage *AccountUsageService) {
+	if s != nil {
+		s.usageService = usage
+	}
+}
+
 // NewChannelMonitorService 创建渠道监控服务实例。
-func NewChannelMonitorService(repo ChannelMonitorRepository, encryptor SecretEncryptor, accountRepos ...AccountRepository) *ChannelMonitorService {
+func NewChannelMonitorService(repo ChannelMonitorRepository, encryptor SecretEncryptor, accountRepo AccountRepository, usageServices ...*AccountUsageService) *ChannelMonitorService {
 	svc := &ChannelMonitorService{repo: repo, encryptor: encryptor}
-	if len(accountRepos) > 0 {
-		svc.accountRepo = accountRepos[0]
+	svc.accountRepo = accountRepo
+	if len(usageServices) > 0 {
+		svc.usageService = usageServices[0]
 	}
 	return svc
 }
@@ -121,6 +136,9 @@ func (s *ChannelMonitorService) Create(ctx context.Context, p ChannelMonitorCrea
 	if err := validateExtraHeaders(p.ExtraHeaders); err != nil {
 		return nil, err
 	}
+	if err := s.validateBoundAccount(ctx, p.Provider, p.AccountID); err != nil {
+		return nil, err
+	}
 	encrypted, err := s.encryptor.Encrypt(p.APIKey)
 	if err != nil {
 		return nil, fmt.Errorf("encrypt api key: %w", err)
@@ -128,6 +146,8 @@ func (s *ChannelMonitorService) Create(ctx context.Context, p ChannelMonitorCrea
 	m := &ChannelMonitor{
 		Name:             strings.TrimSpace(p.Name),
 		Provider:         p.Provider,
+		Mode:             defaultMonitorMode(p.Mode),
+		AccountID:        p.AccountID,
 		APIMode:          defaultAPIMode(p.APIMode),
 		Endpoint:         normalizeEndpoint(p.Endpoint),
 		APIKey:           encrypted, // 注意：传入 repository 时该字段为密文
@@ -288,6 +308,12 @@ func monitorProviderFromAccountPlatform(platform string) (string, bool) {
 		return MonitorProviderAnthropic, true
 	case PlatformGemini:
 		return MonitorProviderGemini, true
+	case PlatformKimi:
+		return MonitorProviderKimi, true
+	case PlatformZhipu:
+		return MonitorProviderZhipu, true
+	case PlatformDeepSeek:
+		return MonitorProviderDeepSeek, true
 	default:
 		return "", false
 	}
@@ -313,6 +339,11 @@ func monitorEndpointFromAccount(provider string, a *Account) (string, bool) {
 		}
 	case MonitorProviderGemini:
 		raw = a.GetGeminiBaseURL("https://generativelanguage.googleapis.com")
+	case MonitorProviderAntigravity, MonitorProviderKimi, MonitorProviderZhipu, MonitorProviderDeepSeek:
+		raw = strings.TrimSpace(a.GetCredential("base_url"))
+		if raw == "" {
+			raw = strings.TrimSpace(a.GetBaseURL())
+		}
 	default:
 		return "", false
 	}
@@ -363,6 +394,14 @@ func monitorPrimaryModelForProvider(provider string) string {
 		return "gemini-3-flash"
 	case MonitorProviderGrok:
 		return MonitorDefaultGrokModel
+	case MonitorProviderAntigravity:
+		return "claude-sonnet-4-5"
+	case MonitorProviderKimi:
+		return "kimi-latest"
+	case MonitorProviderZhipu:
+		return "glm-4.5"
+	case MonitorProviderDeepSeek:
+		return "deepseek-chat"
 	default:
 		return ""
 	}
@@ -375,6 +414,12 @@ func monitorDedupeKey(provider, endpoint, apiKey string) string {
 // validateCreateParams 把 Create 入参的所有校验聚拢为一个函数，避免 Create 主体超过 30 行。
 func validateCreateParams(p ChannelMonitorCreateParams) error {
 	if err := validateProvider(p.Provider); err != nil {
+		return err
+	}
+	if err := validateMonitorMode(p.Mode); err != nil {
+		return err
+	}
+	if err := validateProviderMode(p.Provider, p.Mode); err != nil {
 		return err
 	}
 	if err := validateAPIMode(p.Provider, p.APIMode); err != nil {
@@ -404,6 +449,9 @@ func (s *ChannelMonitorService) Update(ctx context.Context, id int64, p ChannelM
 	if err := applyMonitorUpdate(existing, p); err != nil {
 		return nil, err
 	}
+	if err := s.validateBoundAccount(ctx, existing.Provider, existing.AccountID); err != nil {
+		return nil, err
+	}
 
 	newPlainAPIKey, apiKeyUpdated, err := s.applyAPIKeyUpdate(existing, p.APIKey)
 	if err != nil {
@@ -426,6 +474,23 @@ func (s *ChannelMonitorService) Update(ctx context.Context, id int64, p ChannelM
 		s.scheduler.Schedule(existing)
 	}
 	return existing, nil
+}
+
+func (s *ChannelMonitorService) validateBoundAccount(ctx context.Context, provider string, accountID *int64) error {
+	if accountID == nil || s == nil || s.accountRepo == nil {
+		return nil
+	}
+	account, err := s.accountRepo.GetByID(ctx, *accountID)
+	if err != nil {
+		return err
+	}
+	if account == nil {
+		return ErrChannelMonitorNotFound
+	}
+	if strings.TrimSpace(account.Platform) != strings.TrimSpace(provider) {
+		return ErrChannelMonitorAccountProviderMismatch
+	}
+	return nil
 }
 
 // applyAPIKeyUpdate 处理 Update 中的 APIKey 字段：
@@ -473,6 +538,76 @@ func (s *ChannelMonitorService) ListHistory(ctx context.Context, id int64, model
 		return nil, fmt.Errorf("list history: %w", err)
 	}
 	return entries, nil
+}
+
+// RecordGatewayTelemetry records real gateway traffic for enabled passive
+// monitors bound to the selected account.
+func (s *ChannelMonitorService) RecordGatewayTelemetry(ctx context.Context, accountID int64, model, status string, latencyMs int, checkedAt time.Time) error {
+	if s == nil || s.repo == nil || accountID <= 0 {
+		return nil
+	}
+	if strings.TrimSpace(status) == "" {
+		status = "operational"
+	}
+	if latencyMs < 0 {
+		latencyMs = 0
+	}
+	if checkedAt.IsZero() {
+		checkedAt = time.Now().UTC()
+	}
+	return s.repo.RecordGatewayTelemetry(ctx, accountID, strings.TrimSpace(model), status, latencyMs, checkedAt)
+}
+
+func (s *ChannelMonitorService) SearchAccounts(ctx context.Context, provider, search string, page, pageSize int) ([]ChannelMonitorAccountOption, int64, error) {
+	if s == nil || s.accountRepo == nil {
+		return nil, 0, fmt.Errorf("account repository is unavailable")
+	}
+	if page <= 0 {
+		page = 1
+	}
+	if pageSize <= 0 {
+		pageSize = 20
+	}
+	if pageSize > 100 {
+		pageSize = 100
+	}
+	accounts, result, err := s.accountRepo.ListWithFilters(ctx, pagination.PaginationParams{Page: page, PageSize: pageSize, SortBy: "name", SortOrder: "asc"}, strings.TrimSpace(provider), "", "", strings.TrimSpace(search), 0, "")
+	if err != nil {
+		return nil, 0, err
+	}
+	out := make([]ChannelMonitorAccountOption, 0, len(accounts))
+	for _, a := range accounts {
+		out = append(out, ChannelMonitorAccountOption{ID: a.ID, Name: a.Name, Platform: a.Platform, Status: a.Status})
+	}
+	var total int64
+	if result != nil {
+		total = int64(result.Total)
+	}
+	return out, total, nil
+}
+
+func (s *ChannelMonitorService) GetQuotaSnapshot(ctx context.Context, m *ChannelMonitor) *ChannelMonitorQuotaSnapshot {
+	if s == nil || m == nil || m.Mode != MonitorModeQuota || m.AccountID == nil || s.usageService == nil {
+		return &ChannelMonitorQuotaSnapshot{State: "unknown"}
+	}
+	usage, err := s.usageService.GetUsage(ctx, *m.AccountID)
+	if err != nil || usage == nil {
+		return &ChannelMonitorQuotaSnapshot{State: "failed"}
+	}
+	snapshot := &ChannelMonitorQuotaSnapshot{State: "fresh", UpdatedAt: usage.UpdatedAt, Summary: map[string]any{"source": usage.Source}}
+	if usage.GrokQuotaSnapshotState != "" {
+		snapshot.State = usage.GrokQuotaSnapshotState
+	}
+	if usage.FiveHour != nil {
+		snapshot.Summary["five_hour"] = usage.FiveHour
+	}
+	if usage.SevenDay != nil {
+		snapshot.Summary["seven_day"] = usage.SevenDay
+	}
+	if usage.GrokBilling != nil {
+		snapshot.Summary["grok_billing"] = usage.GrokBilling
+	}
+	return snapshot
 }
 
 // ---------- 业务 ----------
@@ -710,6 +845,18 @@ func applyMonitorUpdate(existing *ChannelMonitor, p ChannelMonitorUpdateParams) 
 		}
 		providerChanged = existing.Provider != *p.Provider
 		existing.Provider = *p.Provider
+	}
+	if p.Mode != nil {
+		if err := validateMonitorMode(*p.Mode); err != nil {
+			return err
+		}
+		existing.Mode = defaultMonitorMode(*p.Mode)
+	}
+	if err := validateProviderMode(existing.Provider, existing.Mode); err != nil {
+		return err
+	}
+	if p.AccountID != nil {
+		existing.AccountID = *p.AccountID
 	}
 	if p.Endpoint != nil {
 		if err := validateEndpoint(*p.Endpoint); err != nil {

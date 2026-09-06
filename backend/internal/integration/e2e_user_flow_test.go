@@ -24,6 +24,27 @@ var (
 
 // TestUserRegistrationAndLogin 测试用户注册和登录流程
 func TestUserRegistrationAndLogin(t *testing.T) {
+	configuredEmail := getEnv("E2E_ADMIN_EMAIL", "")
+	configuredPassword := getEnv("E2E_ADMIN_PASSWORD", "")
+	if configuredEmail != "" && configuredPassword != "" {
+		t.Run("隔离管理员登录获取JWT", func(t *testing.T) {
+			accessToken := loginWithCredentials(t, configuredEmail, configuredPassword)
+			if accessToken == "" {
+				t.Fatal("隔离管理员登录未返回 access_token")
+			}
+			resp, err := doRequest(t, http.MethodGet, "/api/v1/user/profile", nil, accessToken)
+			if err != nil {
+				t.Fatalf("请求用户信息失败: %v", err)
+			}
+			defer resp.Body.Close()
+			if resp.StatusCode != http.StatusOK {
+				body, _ := io.ReadAll(resp.Body)
+				t.Fatalf("用户信息返回 HTTP %d: %s", resp.StatusCode, string(body))
+			}
+		})
+		return
+	}
+
 	// 步骤 1: 注册新用户
 	t.Run("注册新用户", func(t *testing.T) {
 		payload := map[string]string{
@@ -33,7 +54,7 @@ func TestUserRegistrationAndLogin(t *testing.T) {
 		}
 		body, _ := json.Marshal(payload)
 
-		resp, err := doRequest(t, "POST", "/api/auth/register", body, "")
+		resp, err := doRequest(t, "POST", "/api/v1/auth/register", body, "")
 		if err != nil {
 			t.Skipf("注册接口不可用，跳过用户流程测试: %v", err)
 			return
@@ -64,7 +85,7 @@ func TestUserRegistrationAndLogin(t *testing.T) {
 		}
 		body, _ := json.Marshal(payload)
 
-		resp, err := doRequest(t, "POST", "/api/auth/login", body, "")
+		resp, err := doRequest(t, "POST", "/api/v1/auth/login", body, "")
 		if err != nil {
 			t.Fatalf("登录请求失败: %v", err)
 		}
@@ -111,7 +132,7 @@ func TestUserRegistrationAndLogin(t *testing.T) {
 
 	// 步骤 3: 使用 JWT 获取当前用户信息
 	t.Run("获取当前用户信息", func(t *testing.T) {
-		resp, err := doRequest(t, "GET", "/api/user/me", nil, accessToken)
+		resp, err := doRequest(t, "GET", "/api/v1/user/profile", nil, accessToken)
 		if err != nil {
 			t.Fatalf("请求失败: %v", err)
 		}
@@ -144,7 +165,7 @@ func TestAPIKeyLifecycle(t *testing.T) {
 		}
 		body, _ := json.Marshal(payload)
 
-		resp, err := doRequest(t, "POST", "/api/keys", body, accessToken)
+		resp, err := doRequest(t, "POST", "/api/v1/keys", body, accessToken)
 		if err != nil {
 			t.Fatalf("创建 API Key 请求失败: %v", err)
 		}
@@ -215,7 +236,7 @@ func TestAPIKeyLifecycle(t *testing.T) {
 
 	// 步骤 3: 查询用量记录
 	t.Run("查询用量记录", func(t *testing.T) {
-		resp, err := doRequest(t, "GET", "/api/usage/dashboard", nil, accessToken)
+		resp, err := doRequest(t, "GET", "/api/v1/usage/dashboard/stats", nil, accessToken)
 		if err != nil {
 			t.Fatalf("用量查询请求失败: %v", err)
 		}
@@ -264,8 +285,8 @@ func loginTestUser(t *testing.T) string {
 	t.Helper()
 
 	// 先尝试用管理员账户登录
-	adminEmail := getEnv("ADMIN_EMAIL", "admin@sub2api.local")
-	adminPassword := getEnv("ADMIN_PASSWORD", "")
+	adminEmail := getEnv("E2E_ADMIN_EMAIL", getEnv("ADMIN_EMAIL", "admin@sub2api.local"))
+	adminPassword := getEnv("E2E_ADMIN_PASSWORD", getEnv("ADMIN_PASSWORD", ""))
 
 	if adminPassword == "" {
 		// 尝试用测试用户
@@ -273,13 +294,15 @@ func loginTestUser(t *testing.T) string {
 		adminPassword = testUserPassword
 	}
 
-	payload := map[string]string{
-		"email":    adminEmail,
-		"password": adminPassword,
-	}
+	return loginWithCredentials(t, adminEmail, adminPassword)
+}
+
+func loginWithCredentials(t *testing.T, email, password string) string {
+	t.Helper()
+	payload := map[string]string{"email": email, "password": password}
 	body, _ := json.Marshal(payload)
 
-	resp, err := doRequest(t, "POST", "/api/auth/login", body, "")
+	resp, err := doRequest(t, http.MethodPost, "/api/v1/auth/login", body, "")
 	if err != nil {
 		return ""
 	}

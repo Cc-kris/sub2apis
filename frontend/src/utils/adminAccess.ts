@@ -39,22 +39,6 @@ export function canAccessOpsAIAnalysis(role: unknown): boolean {
   return isPlatformOwnerRole(role) || isOpsRole(role)
 }
 
-export function canAccessCacheManagement(role: unknown): boolean {
-  return isPlatformOwnerRole(role) || isOpsRole(role)
-}
-
-export function canAccessCacheStats(role: unknown): boolean {
-  return isPlatformOwnerRole(role) || isOpsRole(role) || isBusinessRole(role)
-}
-
-export function canExportCacheStats(role: unknown): boolean {
-  return isPlatformOwnerRole(role) || isBusinessRole(role)
-}
-
-export function canAccessSemanticCache(role: unknown): boolean {
-  return isPlatformOwnerRole(role) || isOpsRole(role)
-}
-
 export function canAccessAdminPath(path: string, role: unknown): boolean {
   if (isPlatformOwnerRole(role)) {
     return true
@@ -73,15 +57,6 @@ export function canAccessAdminPath(path: string, role: unknown): boolean {
       return canAccessOpsAlertRules(role)
     case '/admin/ops/ai-analysis':
       return canAccessOpsAIAnalysis(role)
-    case '/admin/settings/cache':
-    case '/admin/settings/cache/clear':
-    case '/admin/settings/cache/advanced':
-      return canAccessCacheManagement(role)
-    case '/admin/settings/cache/stats':
-      return canAccessCacheStats(role)
-    case '/admin/settings/cache/semantic':
-    case '/admin/settings/cache/semantic-audits':
-      return canAccessSemanticCache(role)
     default:
       return false
   }
@@ -93,9 +68,6 @@ export function resolveAdminHomePath(role: unknown): string {
   }
   if (canAccessOpsOverview(role)) {
     return '/admin/ops/overview'
-  }
-  if (canAccessCacheStats(role)) {
-    return '/admin/settings/cache/stats'
   }
   return '/dashboard'
 }

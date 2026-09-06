@@ -23,6 +23,8 @@ const (
 	FieldName = "name"
 	// FieldProvider holds the string denoting the provider field in the database.
 	FieldProvider = "provider"
+	// FieldMode holds the string denoting the mode field in the database.
+	FieldMode = "mode"
 	// FieldAPIMode holds the string denoting the api_mode field in the database.
 	FieldAPIMode = "api_mode"
 	// FieldEndpoint holds the string denoting the endpoint field in the database.
@@ -43,6 +45,8 @@ const (
 	FieldLastCheckedAt = "last_checked_at"
 	// FieldCreatedBy holds the string denoting the created_by field in the database.
 	FieldCreatedBy = "created_by"
+	// FieldAccountID holds the string denoting the account_id field in the database.
+	FieldAccountID = "account_id"
 	// FieldTemplateID holds the string denoting the template_id field in the database.
 	FieldTemplateID = "template_id"
 	// FieldExtraHeaders holds the string denoting the extra_headers field in the database.
@@ -89,6 +93,7 @@ var Columns = []string{
 	FieldUpdatedAt,
 	FieldName,
 	FieldProvider,
+	FieldMode,
 	FieldAPIMode,
 	FieldEndpoint,
 	FieldAPIKeyEncrypted,
@@ -99,6 +104,7 @@ var Columns = []string{
 	FieldIntervalSeconds,
 	FieldLastCheckedAt,
 	FieldCreatedBy,
+	FieldAccountID,
 	FieldTemplateID,
 	FieldExtraHeaders,
 	FieldBodyOverrideMode,
@@ -124,6 +130,10 @@ var (
 	UpdateDefaultUpdatedAt func() time.Time
 	// NameValidator is a validator for the "name" field. It is called by the builders before save.
 	NameValidator func(string) error
+	// DefaultMode holds the default value on creation for the "mode" field.
+	DefaultMode string
+	// ModeValidator is a validator for the "mode" field. It is called by the builders before save.
+	ModeValidator func(string) error
 	// DefaultAPIMode holds the default value on creation for the "api_mode" field.
 	DefaultAPIMode string
 	// APIModeValidator is a validator for the "api_mode" field. It is called by the builders before save.
@@ -157,10 +167,14 @@ type Provider string
 
 // Provider values.
 const (
-	ProviderOpenai    Provider = "openai"
-	ProviderAnthropic Provider = "anthropic"
-	ProviderGemini    Provider = "gemini"
-	ProviderGrok      Provider = "grok"
+	ProviderOpenai      Provider = "openai"
+	ProviderAnthropic   Provider = "anthropic"
+	ProviderGemini      Provider = "gemini"
+	ProviderGrok        Provider = "grok"
+	ProviderAntigravity Provider = "antigravity"
+	ProviderKimi        Provider = "kimi"
+	ProviderZhipu       Provider = "zhipu"
+	ProviderDeepseek    Provider = "deepseek"
 )
 
 func (pr Provider) String() string {
@@ -170,7 +184,7 @@ func (pr Provider) String() string {
 // ProviderValidator is a validator for the "provider" field enum values. It is called by the builders before save.
 func ProviderValidator(pr Provider) error {
 	switch pr {
-	case ProviderOpenai, ProviderAnthropic, ProviderGemini, ProviderGrok:
+	case ProviderOpenai, ProviderAnthropic, ProviderGemini, ProviderGrok, ProviderAntigravity, ProviderKimi, ProviderZhipu, ProviderDeepseek:
 		return nil
 	default:
 		return fmt.Errorf("channelmonitor: invalid enum value for provider field: %q", pr)
@@ -203,6 +217,11 @@ func ByName(opts ...sql.OrderTermOption) OrderOption {
 // ByProvider orders the results by the provider field.
 func ByProvider(opts ...sql.OrderTermOption) OrderOption {
 	return sql.OrderByField(FieldProvider, opts...).ToFunc()
+}
+
+// ByMode orders the results by the mode field.
+func ByMode(opts ...sql.OrderTermOption) OrderOption {
+	return sql.OrderByField(FieldMode, opts...).ToFunc()
 }
 
 // ByAPIMode orders the results by the api_mode field.
@@ -248,6 +267,11 @@ func ByLastCheckedAt(opts ...sql.OrderTermOption) OrderOption {
 // ByCreatedBy orders the results by the created_by field.
 func ByCreatedBy(opts ...sql.OrderTermOption) OrderOption {
 	return sql.OrderByField(FieldCreatedBy, opts...).ToFunc()
+}
+
+// ByAccountID orders the results by the account_id field.
+func ByAccountID(opts ...sql.OrderTermOption) OrderOption {
+	return sql.OrderByField(FieldAccountID, opts...).ToFunc()
 }
 
 // ByTemplateID orders the results by the template_id field.

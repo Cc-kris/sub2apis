@@ -576,6 +576,10 @@ func (h *AccountHandler) Create(c *gin.Context) {
 		response.BadRequest(c, "rate_multiplier must be >= 0")
 		return
 	}
+	if err := service.ValidateDomesticOpenAIAccountCredentials(req.Platform, req.Type, req.Credentials); err != nil {
+		c.JSON(http.StatusUnprocessableEntity, gin.H{"error": gin.H{"type": "invalid_account_configuration", "message": err.Error()}})
+		return
+	}
 	upstreamCostMultiplier, err := parseUpstreamCostMultiplier(req.UpstreamCostMultiplier, true)
 	if err != nil {
 		response.BadRequest(c, err.Error())
@@ -686,6 +690,23 @@ func (h *AccountHandler) Update(c *gin.Context) {
 
 	// 确定是否跳过混合渠道检查
 	skipCheck := req.ConfirmMixedChannelRisk != nil && *req.ConfirmMixedChannelRisk
+	existingAccount, err := h.adminService.GetAccount(c.Request.Context(), accountID)
+	if err != nil {
+		response.ErrorFrom(c, err)
+		return
+	}
+	effectiveType := req.Type
+	if effectiveType == "" {
+		effectiveType = existingAccount.Type
+	}
+	effectiveCredentials := req.Credentials
+	if len(effectiveCredentials) == 0 {
+		effectiveCredentials = existingAccount.Credentials
+	}
+	if err := service.ValidateDomesticOpenAIAccountCredentials(existingAccount.Platform, effectiveType, effectiveCredentials); err != nil {
+		c.JSON(http.StatusUnprocessableEntity, gin.H{"error": gin.H{"type": "invalid_account_configuration", "message": err.Error()}})
+		return
+	}
 
 	account, err := h.adminService.UpdateAccount(c.Request.Context(), accountID, &service.UpdateAccountInput{
 		Name:                               req.Name,
@@ -865,16 +886,76 @@ func (h *AccountHandler) Test(c *gin.Context) {
 	_ = c.ShouldBindJSON(&req)
 
 	// Use AccountTestService to test the account with SSE streaming
+	var teamProbe *service.OpenAITeamProbeLease
+	if h.rateLimitService != nil {
+		teamProbe, err = h.rateLimitService.ClaimOpenAITeamProbeNow(c.Request.Context(), accountID, "admin")
+		if err != nil {
+			_ = c.Error(err)
+			return
+		}
+		if teamProbe == nil {
+			active, checkErr := h.rateLimitService.HasActiveOpenAITeamBlock(c.Request.Context(), accountID)
+			if checkErr != nil {
+				_ = c.Error(checkErr)
+				return
+			}
+			if active {
+				response.Error(c, http.StatusConflict, "Team workspace recovery probe is already in progress")
+				return
+			}
+		}
+	}
 	if err := h.accountTestService.TestAccountConnection(c, accountID, req.ModelID, req.Prompt, req.Mode); err != nil {
+		if teamProbe != nil {
+			_ = h.rateLimitService.CompleteOpenAITeamProbe(c.Request.Context(), teamProbe, false)
+		}
 		// Error already sent via SSE, just log
 		return
 	}
 
 	if h.rateLimitService != nil {
-		if _, err := h.rateLimitService.RecoverAccountAfterSuccessfulTest(c.Request.Context(), accountID); err != nil {
+		var err error
+		if teamProbe != nil {
+			err = h.rateLimitService.CompleteOpenAITeamProbe(c.Request.Context(), teamProbe, true)
+		} else {
+			_, err = h.rateLimitService.RecoverAccountAfterSuccessfulTest(c.Request.Context(), accountID)
+		}
+		if err != nil {
 			_ = c.Error(err)
 		}
 	}
+}
+
+// GetTeamWorkspaceBlock returns the active Team circuit-breaker state for an
+// account, including its affected account IDs and next automatic recovery time.
+// GET /api/v1/admin/accounts/:id/team-workspace
+func (h *AccountHandler) GetTeamWorkspaceBlock(c *gin.Context) {
+	accountID, err := strconv.ParseInt(c.Param("id"), 10, 64)
+	if err != nil {
+		response.BadRequest(c, "Invalid account ID")
+		return
+	}
+	if h.rateLimitService == nil {
+		response.Error(c, http.StatusServiceUnavailable, "Rate limit service unavailable")
+		return
+	}
+	status, err := h.rateLimitService.GetOpenAITeamBlockStatus(c.Request.Context(), accountID)
+	if err != nil {
+		response.ErrorFrom(c, err)
+		return
+	}
+	if status == nil {
+		response.Success(c, gin.H{"active": false})
+		return
+	}
+	response.Success(c, gin.H{
+		"active":               true,
+		"team_id":              status.TeamID,
+		"state":                status.State,
+		"block_until":          status.BlockUntil,
+		"affected_account_ids": status.AffectedAccountIDs,
+		"recovery_action":      "POST /api/v1/admin/accounts/:id/test",
+	})
 }
 
 type BatchAccountTestItem struct {
@@ -1043,6 +1124,15 @@ func (h *AccountHandler) RecoverState(c *gin.Context) {
 
 	if h.rateLimitService == nil {
 		response.Error(c, http.StatusServiceUnavailable, "Rate limit service unavailable")
+		return
+	}
+	teamBlocked, err := h.rateLimitService.HasActiveOpenAITeamBlock(c.Request.Context(), accountID)
+	if err != nil {
+		response.ErrorFrom(c, err)
+		return
+	}
+	if teamBlocked {
+		response.Error(c, http.StatusConflict, "Team workspace is blocked; complete a Team probe before recovering an individual account")
 		return
 	}
 
@@ -1328,6 +1418,9 @@ func (h *AccountHandler) ClearError(c *gin.Context) {
 		return
 	}
 
+	if h.rejectActiveOpenAITeamBlock(c, accountID) {
+		return
+	}
 	account, err := h.adminService.ClearAccountError(c.Request.Context(), accountID)
 	if err != nil {
 		response.ErrorFrom(c, err)
@@ -1374,6 +1467,20 @@ func (h *AccountHandler) BatchClearError(c *gin.Context) {
 	for _, id := range req.AccountIDs {
 		accountID := id // 闭包捕获
 		g.Go(func() error {
+			if h.rateLimitService != nil {
+				active, teamErr := h.rateLimitService.HasActiveOpenAITeamBlock(gctx, accountID)
+				if teamErr != nil || active {
+					message := "Team workspace is blocked; complete a Team probe before clearing an individual account"
+					if teamErr != nil {
+						message = teamErr.Error()
+					}
+					mu.Lock()
+					failedCount++
+					errors = append(errors, gin.H{"account_id": accountID, "error": message})
+					mu.Unlock()
+					return nil
+				}
+			}
 			account, err := h.adminService.ClearAccountError(gctx, accountID)
 			if err != nil {
 				mu.Lock()
@@ -2026,6 +2133,9 @@ func (h *AccountHandler) ClearRateLimit(c *gin.Context) {
 		return
 	}
 
+	if h.rejectActiveOpenAITeamBlock(c, accountID) {
+		return
+	}
 	err = h.rateLimitService.ClearRateLimit(c.Request.Context(), accountID)
 	if err != nil {
 		response.ErrorFrom(c, err)
@@ -2099,12 +2209,31 @@ func (h *AccountHandler) ClearTempUnschedulable(c *gin.Context) {
 		return
 	}
 
+	if h.rejectActiveOpenAITeamBlock(c, accountID) {
+		return
+	}
 	if err := h.rateLimitService.ClearTempUnschedulable(c.Request.Context(), accountID); err != nil {
 		response.ErrorFrom(c, err)
 		return
 	}
 
 	response.Success(c, gin.H{"message": "Temp unschedulable cleared successfully"})
+}
+
+func (h *AccountHandler) rejectActiveOpenAITeamBlock(c *gin.Context, accountID int64) bool {
+	if h.rateLimitService == nil {
+		return false
+	}
+	active, err := h.rateLimitService.HasActiveOpenAITeamBlock(c.Request.Context(), accountID)
+	if err != nil {
+		response.ErrorFrom(c, err)
+		return true
+	}
+	if active {
+		response.Error(c, http.StatusConflict, "Team workspace is blocked; complete a Team probe before clearing an individual account")
+		return true
+	}
+	return false
 }
 
 // GetTodayStats handles getting account today statistics

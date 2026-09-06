@@ -30,6 +30,18 @@ func ProvidePricingService(cfg *config.Config, remoteClient PricingRemoteClient)
 	return svc, nil
 }
 
+// ProvideCNProviderQuotaService wires the domestic provider quota resolver.
+// It is intentionally optional at runtime: absent quota_url/balance_url values
+// yield an explicit unknown/failed snapshot and never a fabricated zero.
+func ProvideCNProviderQuotaService(accountRepo AccountRepository, httpUpstream HTTPUpstream, cfg *config.Config, tlsProfiles *TLSFingerprintProfileService) *CNProviderQuotaService {
+	fetcher := NewHTTPCNProviderQuotaFetcher(httpUpstream, cfg, tlsProfiles)
+	return NewCNProviderQuotaService(accountRepo, fetcher)
+}
+
+func ProvideCNProviderBalanceService(quota *CNProviderQuotaService) *CNProviderBalanceService {
+	return NewCNProviderBalanceService(quota)
+}
+
 // ProvideUpdateService creates UpdateService with BuildInfo
 func ProvideUpdateService(cache UpdateCache, githubClient GitHubReleaseClient, buildInfo BuildInfo) *UpdateService {
 	return NewUpdateService(cache, githubClient, buildInfo.Version, buildInfo.BuildType)
@@ -37,6 +49,16 @@ func ProvideUpdateService(cache UpdateCache, githubClient GitHubReleaseClient, b
 
 func ProvideCacheStatsService(repo OpsRepository, cache GatewayCache, settingService *SettingService) *CacheStatsService {
 	return NewCacheStatsService(repo).SetAdvancedDependencies(repo, cache, settingService)
+}
+
+func ProvideChannelService(repo ChannelRepository, groupRepo GroupRepository, authCacheInvalidator APIKeyAuthCacheInvalidator, pricingService *PricingService, settingService *SettingService) *ChannelService {
+	svc := NewChannelService(repo, groupRepo, authCacheInvalidator, pricingService)
+	svc.SetSettingService(settingService)
+	return svc
+}
+
+func ProvideSeedaceVideoService(accountRepo AccountRepository, usageLogRepo UsageLogRepository, usageBillingRepo UsageBillingRepository, userRepo UserRepository, userSubRepo UserSubscriptionRepository, channelService *ChannelService, billingService *BillingService, resolver *ModelPricingResolver, apiKeyService *APIKeyService, billingCacheService *BillingCacheService, deferredService *DeferredService, balanceNotifyService *BalanceNotifyService, quotaRepo UserPlatformQuotaRepository, httpUpstream HTTPUpstream, cfg *config.Config, settingService *SettingService) *SeedaceVideoService {
+	return NewSeedaceVideoService(accountRepo, usageLogRepo, usageBillingRepo, userRepo, userSubRepo, channelService, billingService, resolver, apiKeyService, billingCacheService, deferredService, balanceNotifyService, quotaRepo, httpUpstream, cfg, settingService)
 }
 
 func ProvideUpstreamFundService(wallets *UpstreamWalletService, repo UpstreamFundRepository, balances UpstreamFundBalanceRecorder) *UpstreamFundService {
@@ -279,12 +301,14 @@ func ProvideRateLimitService(
 	openAI403CounterCache OpenAI403CounterCache,
 	settingService *SettingService,
 	tokenCacheInvalidator TokenCacheInvalidator,
+	teamBlockStore OpenAITeamBlockStore,
 ) *RateLimitService {
 	svc := NewRateLimitService(accountRepo, usageRepo, cfg, geminiQuotaService, tempUnschedCache)
 	svc.SetTimeoutCounterCache(timeoutCounterCache)
 	svc.SetOpenAI403CounterCache(openAI403CounterCache)
 	svc.SetSettingService(settingService)
 	svc.SetTokenCacheInvalidator(tokenCacheInvalidator)
+	svc.SetOpenAITeamBlockStore(teamBlockStore)
 	return svc
 }
 
@@ -482,11 +506,74 @@ func ProvideOpenAIGatewayService(
 	userPlatformQuotaRepo UserPlatformQuotaRepository,
 	idempotencyRepo IdempotencyRepository,
 	semanticCacheWriter *SemanticCacheAsyncWriter,
+	cnQuotaService *CNProviderQuotaService,
+	channelMonitorService *ChannelMonitorService,
 ) *OpenAIGatewayService {
 	svc := NewOpenAIGatewayService(accountRepo, usageLogRepo, usageBillingRepo, userRepo, userSubRepo, userGroupRateRepo, cache, cfg, schedulerSnapshot, concurrencyService, billingService, rateLimitService, billingCacheService, httpUpstream, deferredService, openAITokenProvider, resolver, channelService, balanceNotifyService, settingService, userPlatformQuotaRepo, idempotencyRepo)
 	svc.SetGrokTokenProvider(grokTokenProvider)
 	svc.SetSemanticCacheWriter(semanticCacheWriter)
+	svc.SetCNProviderQuotaService(cnQuotaService)
+	svc.SetGatewayTelemetryRecorder(channelMonitorService)
 	return svc
+}
+
+// ProvideAccountUsageService wires domestic quota and balance snapshots into
+// the existing account usage service while preserving the public constructor
+// used by focused tests and integrations.
+func ProvideAccountUsageService(
+	accountRepo AccountRepository,
+	usageLogRepo UsageLogRepository,
+	usageFetcher ClaudeUsageFetcher,
+	geminiQuotaService *GeminiQuotaService,
+	antigravityQuotaFetcher *AntigravityQuotaFetcher,
+	grokQuotaFetcher *GrokQuotaFetcher,
+	grokQuotaService *GrokQuotaService,
+	cache *UsageCache,
+	identityCache IdentityCache,
+	tlsFPProfileService *TLSFingerprintProfileService,
+	cnQuotaService *CNProviderQuotaService,
+	cnBalanceService *CNProviderBalanceService,
+) *AccountUsageService {
+	svc := NewAccountUsageService(accountRepo, usageLogRepo, usageFetcher, geminiQuotaService, antigravityQuotaFetcher, grokQuotaFetcher, grokQuotaService, cache, identityCache, tlsFPProfileService)
+	svc.SetCNQuotaService(cnQuotaService)
+	svc.SetCNBalanceService(cnBalanceService)
+	return svc
+}
+
+func ProvideAccountTestService(
+	accountRepo AccountRepository,
+	geminiTokenProvider *GeminiTokenProvider,
+	claudeTokenProvider *ClaudeTokenProvider,
+	grokTokenProvider *GrokTokenProvider,
+	antigravityGatewayService *AntigravityGatewayService,
+	httpUpstream HTTPUpstream,
+	cfg *config.Config,
+	tlsFPProfileService *TLSFingerprintProfileService,
+	settingService *SettingService,
+) *AccountTestService {
+	svc := NewAccountTestService(accountRepo, geminiTokenProvider, claudeTokenProvider, grokTokenProvider, antigravityGatewayService, httpUpstream, cfg, tlsFPProfileService)
+	svc.SetSettingService(settingService)
+	return svc
+}
+
+func ProvideDashboardService(
+	usageRepo UsageLogRepository,
+	aggRepo DashboardAggregationRepository,
+	cache DashboardStatsCache,
+	cfg *config.Config,
+	providers []GroupUsageSummaryProvider,
+	settingService *SettingService,
+) *DashboardService {
+	svc := NewDashboardService(usageRepo, aggRepo, cache, cfg, providers...)
+	svc.SetSettingService(settingService)
+	return svc
+}
+
+func ProvideCustomGroupUsageRollup(store GroupUsageRollupStore, settingService *SettingService) *CustomGroupUsageRollup {
+	worker := NewCustomGroupUsageRollup(store)
+	worker.SetSettingService(settingService)
+	worker.Start(context.Background())
+	return worker
 }
 
 // ProvideOpsScheduledReportService creates and starts OpsScheduledReportService.
@@ -512,12 +599,13 @@ func ProvideAPIKeyAuthCacheInvalidator(apiKeyService *APIKeyService) APIKeyAuthC
 // ProvideBackupService creates and starts BackupService
 func ProvideBackupService(
 	settingRepo SettingRepository,
+	backupRepo BackupRepository,
 	cfg *config.Config,
 	encryptor SecretEncryptor,
 	storeFactory BackupObjectStoreFactory,
 	dumper DBDumper,
 ) *BackupService {
-	svc := NewBackupService(settingRepo, cfg, encryptor, storeFactory, dumper)
+	svc := NewBackupService(settingRepo, cfg, encryptor, storeFactory, dumper, backupRepo)
 	svc.Start()
 	return svc
 }
@@ -632,7 +720,10 @@ var ProviderSet = wire.NewSet(
 	NewRedeemService,
 	NewPromoService,
 	NewUsageService,
-	NewDashboardService,
+	ProvideDashboardService,
+	ProvideCustomGroupUsageRollup,
+	ProvideCNProviderQuotaService,
+	ProvideCNProviderBalanceService,
 	ProvidePricingService,
 	NewBillingService,
 	ProvideBillingCacheService,
@@ -641,7 +732,7 @@ var ProviderSet = wire.NewSet(
 	ProvideSemanticCacheAsyncWriter,
 	ProvideGatewayService,
 	ProvideOpenAIGatewayService,
-	NewSeedaceVideoService,
+	ProvideSeedaceVideoService,
 	NewSeedaceVideoHistoryService,
 	wire.Bind(new(AccountRuntimeBlocker), new(*OpenAIGatewayService)),
 	NewOAuthService,
@@ -663,8 +754,8 @@ var ProviderSet = wire.NewSet(
 	ProvideClaudeTokenProvider,
 	NewAntigravityGatewayService,
 	ProvideRateLimitService,
-	NewAccountUsageService,
-	NewAccountTestService,
+	ProvideAccountUsageService,
+	ProvideAccountTestService,
 	ProvideSettingService,
 	NewDataManagementService,
 	ProvideBackupService,
@@ -711,7 +802,7 @@ var ProviderSet = wire.NewSet(
 	ProvideScheduledTestService,
 	ProvideScheduledTestRunnerService,
 	NewGroupCapacityService,
-	NewChannelService,
+	ProvideChannelService,
 	NewModelPricingResolver,
 	NewModelSquareService,
 	NewFinanceCostCalculator,
@@ -800,8 +891,9 @@ func ProvideChannelMonitorService(
 	repo ChannelMonitorRepository,
 	encryptor SecretEncryptor,
 	accountRepo AccountRepository,
+	usageService *AccountUsageService,
 ) *ChannelMonitorService {
-	return NewChannelMonitorService(repo, encryptor, accountRepo)
+	return NewChannelMonitorService(repo, encryptor, accountRepo, usageService)
 }
 
 // ProvideChannelMonitorRunner 创建并启动渠道监控调度器。

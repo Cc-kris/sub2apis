@@ -33,6 +33,9 @@ func (s *userRepoStubForGroupUpdate) AddGroupToAllowedGroups(_ context.Context, 
 }
 
 func (s *userRepoStubForGroupUpdate) Create(context.Context, *User) error { panic("unexpected") }
+func (s *userRepoStubForGroupUpdate) CountByEmailDomain(context.Context, string) (int, error) {
+	panic("unexpected")
+}
 func (s *userRepoStubForGroupUpdate) GetByID(context.Context, int64) (*User, error) {
 	panic("unexpected")
 }

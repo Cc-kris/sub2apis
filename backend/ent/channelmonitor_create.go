@@ -65,6 +65,20 @@ func (_c *ChannelMonitorCreate) SetProvider(v channelmonitor.Provider) *ChannelM
 	return _c
 }
 
+// SetMode sets the "mode" field.
+func (_c *ChannelMonitorCreate) SetMode(v string) *ChannelMonitorCreate {
+	_c.mutation.SetMode(v)
+	return _c
+}
+
+// SetNillableMode sets the "mode" field if the given value is not nil.
+func (_c *ChannelMonitorCreate) SetNillableMode(v *string) *ChannelMonitorCreate {
+	if v != nil {
+		_c.SetMode(*v)
+	}
+	return _c
+}
+
 // SetAPIMode sets the "api_mode" field.
 func (_c *ChannelMonitorCreate) SetAPIMode(v string) *ChannelMonitorCreate {
 	_c.mutation.SetAPIMode(v)
@@ -154,6 +168,20 @@ func (_c *ChannelMonitorCreate) SetNillableLastCheckedAt(v *time.Time) *ChannelM
 // SetCreatedBy sets the "created_by" field.
 func (_c *ChannelMonitorCreate) SetCreatedBy(v int64) *ChannelMonitorCreate {
 	_c.mutation.SetCreatedBy(v)
+	return _c
+}
+
+// SetAccountID sets the "account_id" field.
+func (_c *ChannelMonitorCreate) SetAccountID(v int64) *ChannelMonitorCreate {
+	_c.mutation.SetAccountID(v)
+	return _c
+}
+
+// SetNillableAccountID sets the "account_id" field if the given value is not nil.
+func (_c *ChannelMonitorCreate) SetNillableAccountID(v *int64) *ChannelMonitorCreate {
+	if v != nil {
+		_c.SetAccountID(*v)
+	}
 	return _c
 }
 
@@ -289,6 +317,10 @@ func (_c *ChannelMonitorCreate) defaults() {
 		v := channelmonitor.DefaultUpdatedAt()
 		_c.mutation.SetUpdatedAt(v)
 	}
+	if _, ok := _c.mutation.Mode(); !ok {
+		v := channelmonitor.DefaultMode
+		_c.mutation.SetMode(v)
+	}
 	if _, ok := _c.mutation.APIMode(); !ok {
 		v := channelmonitor.DefaultAPIMode
 		_c.mutation.SetAPIMode(v)
@@ -337,6 +369,14 @@ func (_c *ChannelMonitorCreate) check() error {
 	if v, ok := _c.mutation.Provider(); ok {
 		if err := channelmonitor.ProviderValidator(v); err != nil {
 			return &ValidationError{Name: "provider", err: fmt.Errorf(`ent: validator failed for field "ChannelMonitor.provider": %w`, err)}
+		}
+	}
+	if _, ok := _c.mutation.Mode(); !ok {
+		return &ValidationError{Name: "mode", err: errors.New(`ent: missing required field "ChannelMonitor.mode"`)}
+	}
+	if v, ok := _c.mutation.Mode(); ok {
+		if err := channelmonitor.ModeValidator(v); err != nil {
+			return &ValidationError{Name: "mode", err: fmt.Errorf(`ent: validator failed for field "ChannelMonitor.mode": %w`, err)}
 		}
 	}
 	if _, ok := _c.mutation.APIMode(); !ok {
@@ -447,6 +487,10 @@ func (_c *ChannelMonitorCreate) createSpec() (*ChannelMonitor, *sqlgraph.CreateS
 		_spec.SetField(channelmonitor.FieldProvider, field.TypeEnum, value)
 		_node.Provider = value
 	}
+	if value, ok := _c.mutation.Mode(); ok {
+		_spec.SetField(channelmonitor.FieldMode, field.TypeString, value)
+		_node.Mode = value
+	}
 	if value, ok := _c.mutation.APIMode(); ok {
 		_spec.SetField(channelmonitor.FieldAPIMode, field.TypeString, value)
 		_node.APIMode = value
@@ -486,6 +530,10 @@ func (_c *ChannelMonitorCreate) createSpec() (*ChannelMonitor, *sqlgraph.CreateS
 	if value, ok := _c.mutation.CreatedBy(); ok {
 		_spec.SetField(channelmonitor.FieldCreatedBy, field.TypeInt64, value)
 		_node.CreatedBy = value
+	}
+	if value, ok := _c.mutation.AccountID(); ok {
+		_spec.SetField(channelmonitor.FieldAccountID, field.TypeInt64, value)
+		_node.AccountID = &value
 	}
 	if value, ok := _c.mutation.ExtraHeaders(); ok {
 		_spec.SetField(channelmonitor.FieldExtraHeaders, field.TypeJSON, value)
@@ -636,6 +684,18 @@ func (u *ChannelMonitorUpsert) UpdateProvider() *ChannelMonitorUpsert {
 	return u
 }
 
+// SetMode sets the "mode" field.
+func (u *ChannelMonitorUpsert) SetMode(v string) *ChannelMonitorUpsert {
+	u.Set(channelmonitor.FieldMode, v)
+	return u
+}
+
+// UpdateMode sets the "mode" field to the value that was provided on create.
+func (u *ChannelMonitorUpsert) UpdateMode() *ChannelMonitorUpsert {
+	u.SetExcluded(channelmonitor.FieldMode)
+	return u
+}
+
 // SetAPIMode sets the "api_mode" field.
 func (u *ChannelMonitorUpsert) SetAPIMode(v string) *ChannelMonitorUpsert {
 	u.Set(channelmonitor.FieldAPIMode, v)
@@ -777,6 +837,30 @@ func (u *ChannelMonitorUpsert) UpdateCreatedBy() *ChannelMonitorUpsert {
 // AddCreatedBy adds v to the "created_by" field.
 func (u *ChannelMonitorUpsert) AddCreatedBy(v int64) *ChannelMonitorUpsert {
 	u.Add(channelmonitor.FieldCreatedBy, v)
+	return u
+}
+
+// SetAccountID sets the "account_id" field.
+func (u *ChannelMonitorUpsert) SetAccountID(v int64) *ChannelMonitorUpsert {
+	u.Set(channelmonitor.FieldAccountID, v)
+	return u
+}
+
+// UpdateAccountID sets the "account_id" field to the value that was provided on create.
+func (u *ChannelMonitorUpsert) UpdateAccountID() *ChannelMonitorUpsert {
+	u.SetExcluded(channelmonitor.FieldAccountID)
+	return u
+}
+
+// AddAccountID adds v to the "account_id" field.
+func (u *ChannelMonitorUpsert) AddAccountID(v int64) *ChannelMonitorUpsert {
+	u.Add(channelmonitor.FieldAccountID, v)
+	return u
+}
+
+// ClearAccountID clears the value of the "account_id" field.
+func (u *ChannelMonitorUpsert) ClearAccountID() *ChannelMonitorUpsert {
+	u.SetNull(channelmonitor.FieldAccountID)
 	return u
 }
 
@@ -924,6 +1008,20 @@ func (u *ChannelMonitorUpsertOne) SetProvider(v channelmonitor.Provider) *Channe
 func (u *ChannelMonitorUpsertOne) UpdateProvider() *ChannelMonitorUpsertOne {
 	return u.Update(func(s *ChannelMonitorUpsert) {
 		s.UpdateProvider()
+	})
+}
+
+// SetMode sets the "mode" field.
+func (u *ChannelMonitorUpsertOne) SetMode(v string) *ChannelMonitorUpsertOne {
+	return u.Update(func(s *ChannelMonitorUpsert) {
+		s.SetMode(v)
+	})
+}
+
+// UpdateMode sets the "mode" field to the value that was provided on create.
+func (u *ChannelMonitorUpsertOne) UpdateMode() *ChannelMonitorUpsertOne {
+	return u.Update(func(s *ChannelMonitorUpsert) {
+		s.UpdateMode()
 	})
 }
 
@@ -1092,6 +1190,34 @@ func (u *ChannelMonitorUpsertOne) AddCreatedBy(v int64) *ChannelMonitorUpsertOne
 func (u *ChannelMonitorUpsertOne) UpdateCreatedBy() *ChannelMonitorUpsertOne {
 	return u.Update(func(s *ChannelMonitorUpsert) {
 		s.UpdateCreatedBy()
+	})
+}
+
+// SetAccountID sets the "account_id" field.
+func (u *ChannelMonitorUpsertOne) SetAccountID(v int64) *ChannelMonitorUpsertOne {
+	return u.Update(func(s *ChannelMonitorUpsert) {
+		s.SetAccountID(v)
+	})
+}
+
+// AddAccountID adds v to the "account_id" field.
+func (u *ChannelMonitorUpsertOne) AddAccountID(v int64) *ChannelMonitorUpsertOne {
+	return u.Update(func(s *ChannelMonitorUpsert) {
+		s.AddAccountID(v)
+	})
+}
+
+// UpdateAccountID sets the "account_id" field to the value that was provided on create.
+func (u *ChannelMonitorUpsertOne) UpdateAccountID() *ChannelMonitorUpsertOne {
+	return u.Update(func(s *ChannelMonitorUpsert) {
+		s.UpdateAccountID()
+	})
+}
+
+// ClearAccountID clears the value of the "account_id" field.
+func (u *ChannelMonitorUpsertOne) ClearAccountID() *ChannelMonitorUpsertOne {
+	return u.Update(func(s *ChannelMonitorUpsert) {
+		s.ClearAccountID()
 	})
 }
 
@@ -1418,6 +1544,20 @@ func (u *ChannelMonitorUpsertBulk) UpdateProvider() *ChannelMonitorUpsertBulk {
 	})
 }
 
+// SetMode sets the "mode" field.
+func (u *ChannelMonitorUpsertBulk) SetMode(v string) *ChannelMonitorUpsertBulk {
+	return u.Update(func(s *ChannelMonitorUpsert) {
+		s.SetMode(v)
+	})
+}
+
+// UpdateMode sets the "mode" field to the value that was provided on create.
+func (u *ChannelMonitorUpsertBulk) UpdateMode() *ChannelMonitorUpsertBulk {
+	return u.Update(func(s *ChannelMonitorUpsert) {
+		s.UpdateMode()
+	})
+}
+
 // SetAPIMode sets the "api_mode" field.
 func (u *ChannelMonitorUpsertBulk) SetAPIMode(v string) *ChannelMonitorUpsertBulk {
 	return u.Update(func(s *ChannelMonitorUpsert) {
@@ -1583,6 +1723,34 @@ func (u *ChannelMonitorUpsertBulk) AddCreatedBy(v int64) *ChannelMonitorUpsertBu
 func (u *ChannelMonitorUpsertBulk) UpdateCreatedBy() *ChannelMonitorUpsertBulk {
 	return u.Update(func(s *ChannelMonitorUpsert) {
 		s.UpdateCreatedBy()
+	})
+}
+
+// SetAccountID sets the "account_id" field.
+func (u *ChannelMonitorUpsertBulk) SetAccountID(v int64) *ChannelMonitorUpsertBulk {
+	return u.Update(func(s *ChannelMonitorUpsert) {
+		s.SetAccountID(v)
+	})
+}
+
+// AddAccountID adds v to the "account_id" field.
+func (u *ChannelMonitorUpsertBulk) AddAccountID(v int64) *ChannelMonitorUpsertBulk {
+	return u.Update(func(s *ChannelMonitorUpsert) {
+		s.AddAccountID(v)
+	})
+}
+
+// UpdateAccountID sets the "account_id" field to the value that was provided on create.
+func (u *ChannelMonitorUpsertBulk) UpdateAccountID() *ChannelMonitorUpsertBulk {
+	return u.Update(func(s *ChannelMonitorUpsert) {
+		s.UpdateAccountID()
+	})
+}
+
+// ClearAccountID clears the value of the "account_id" field.
+func (u *ChannelMonitorUpsertBulk) ClearAccountID() *ChannelMonitorUpsertBulk {
+	return u.Update(func(s *ChannelMonitorUpsert) {
+		s.ClearAccountID()
 	})
 }
 

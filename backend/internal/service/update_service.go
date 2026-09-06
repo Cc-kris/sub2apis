@@ -22,7 +22,10 @@ import (
 const (
 	updateCacheKey = "update_check_cache"
 	updateCacheTTL = 1200 // 20 minutes
-	githubRepo     = "Cc-kris/sub2apis"
+	// Releases are published from the repository that builds the production
+	// artifacts. Keep this explicit so renamed GitHub repositories or proxy
+	// clients that do not follow API redirects cannot break online updates.
+	githubRepo = "Cc-kris/cc2api"
 
 	// Security: allowed download domains for updates
 	allowedDownloadHost = "github.com"

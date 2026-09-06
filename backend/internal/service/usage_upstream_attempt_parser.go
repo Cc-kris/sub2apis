@@ -30,6 +30,7 @@ func BuildBillableUsageAttemptFromResponse(
 	inputTokens := usageInt64(usage, "input_tokens", "prompt_tokens", "promptTokenCount")
 	outputTokens := usageInt64(usage, "output_tokens", "completion_tokens", "candidatesTokenCount")
 	cacheReadTokens := usageInt64(usage, "cache_read_input_tokens", "cache_read_tokens", "cachedContentTokenCount")
+	cacheCreationTokens := usageInt64(usage, "cache_creation_input_tokens", "cache_creation_tokens", "cache_write_tokens")
 	cacheCreation5mTokens := usageInt64(usage, "cache_creation_5m_input_tokens", "cache_creation_5m_tokens")
 	cacheCreation1hTokens := usageInt64(usage, "cache_creation_1h_input_tokens", "cache_creation_1h_tokens")
 	if details := usageMap(usage, "cache_creation"); details != nil {
@@ -38,11 +39,14 @@ func BuildBillableUsageAttemptFromResponse(
 	}
 	if details := usageMap(usage, "prompt_tokens_details", "input_tokens_details"); details != nil {
 		cacheReadTokens += usageInt64(details, "cached_tokens")
+		if cacheCreationTokens == 0 {
+			cacheCreationTokens = usageInt64(details, "cache_write_tokens", "cache_creation_tokens")
+		}
 	}
 	requestCount := usageInt64(usage, "request_count")
 	imageCount := usageInt64(usage, "image_count")
 	videoSeconds := usageInt64(usage, "video_seconds", "duration_seconds")
-	billable := inputTokens > 0 || outputTokens > 0 || cacheReadTokens > 0 || cacheCreation5mTokens > 0 || cacheCreation1hTokens > 0 || requestCount > 0 || imageCount > 0 || videoSeconds > 0
+	billable := inputTokens > 0 || outputTokens > 0 || cacheReadTokens > 0 || cacheCreationTokens > 0 || cacheCreation5mTokens > 0 || cacheCreation1hTokens > 0 || requestCount > 0 || imageCount > 0 || videoSeconds > 0
 	if !billable || accountID <= 0 || strings.TrimSpace(upstreamModel) == "" {
 		return UsageUpstreamAttempt{}, false
 	}
@@ -62,6 +66,7 @@ func BuildBillableUsageAttemptFromResponse(
 		InputTokens:            inputTokens,
 		OutputTokens:           outputTokens,
 		CacheReadTokens:        cacheReadTokens,
+		CacheCreationTokens:    cacheCreationTokens,
 		CacheCreation5mTokens:  cacheCreation5mTokens,
 		CacheCreation1hTokens:  cacheCreation1hTokens,
 		RequestCount:           requestCount,

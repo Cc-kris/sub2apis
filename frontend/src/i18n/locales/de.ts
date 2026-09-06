@@ -710,6 +710,8 @@ export default {
   "usage": {
     "title": "Nutzungsaufzeichnungen",
     "description": "Anzeigen und Analysieren Ihres API-Nutzungsverlaufs",
+    "tabs": { "label": "Nutzungsansichten", "details": "Details", "errors": "Fehleranfragen", "ranking": "Token-Rangliste", "errorsHint": "Öffnen Sie die einheitliche Fehleransicht für fehlgeschlagene Anfragen und SLA-Klassifizierung.", "openErrors": "Fehleranfragen öffnen" },
+    "tokenRanking": { "title": "Benutzer-Token-Rangliste", "range": "{start} bis {end}", "user": "Benutzer", "failed": "Rangliste konnte nicht geladen werden", "empty": "Keine Token-Nutzung in diesem Zeitraum" },
     "costDetails": "Kostenaufschlüsselung",
     "tokenDetails": "Aufgliederung nach Token",
     "cacheTtlOverriddenHint": "Cache TTL Override aktiviert",
@@ -757,6 +759,8 @@ export default {
     "cost": "Kosten",
     "firstToken": "Erster Token",
     "duration": "Dauer",
+    "firstTokenShort": "Erster",
+    "durationTotal": "Gesamt",
     "time": "Uhrzeit",
     "ws": "WS",
     "stream": "Strom",
@@ -814,7 +818,20 @@ export default {
     "providers": {
       "openai": "OpenAI",
       "anthropic": "Anthropisch",
-      "gemini": "Zwillinge"
+      "gemini": "Zwillinge",
+      "grok": "Grok",
+      "antigravity": "Antigravity",
+      "kimi": "Kimi",
+      "zhipu": "Zhipu",
+      "deepseek": "DeepSeek"
+    },
+    "quotaState": {
+      "fresh": "Kontingent aktuell",
+      "stale": "Kontingent veraltet",
+      "failed": "Kontingent fehlgeschlagen",
+      "unknown": "Kontingent unbekannt",
+      "observed": "Kontingent beobachtet",
+      "billing_observed": "Abrechnung beobachtet"
     },
     "extraModelsHeader": "Zusätzliche Modelle",
     "extraModelsEmpty": "Keine Extramodelle",
@@ -1081,6 +1098,7 @@ export default {
     "securityDescription": "Passwort, Zwei-Faktor-Authentifizierung und Warnungen leben in der richtigen Schiene.",
     "administrator": "Administrator",
     "user": "Nutzer",
+    "unknownRole": "Unbekannt ({role})",
     "username": "Benutzername",
     "email": "E-Mail",
     "status": "Status",

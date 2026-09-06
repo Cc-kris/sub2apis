@@ -710,6 +710,8 @@ export default {
   "usage": {
     "title": "Registres d'utilisation",
     "description": "Visualisez et analysez votre historique d'utilisation de l'API",
+    "tabs": { "label": "Vues d'utilisation", "details": "Détails", "errors": "Requêtes en erreur", "ranking": "Classement des jetons", "errorsHint": "Ouvrez la vue unifiée des erreurs pour examiner les requêtes échouées et la classification SLA.", "openErrors": "Ouvrir les erreurs" },
+    "tokenRanking": { "title": "Classement des jetons par utilisateur", "range": "{start} à {end}", "user": "Utilisateur", "failed": "Échec du chargement du classement", "empty": "Aucune utilisation de jetons sur cette période" },
     "costDetails": "Ventilation des coûts",
     "tokenDetails": "Ventilation des jetons",
     "cacheTtlOverriddenHint": "Cache TTL Dépassement activé",
@@ -757,6 +759,8 @@ export default {
     "cost": "Coût",
     "firstToken": "Premier jeton",
     "duration": "Durée",
+    "firstTokenShort": "Premier",
+    "durationTotal": "Total",
     "time": "Heure",
     "ws": "WS",
     "stream": "Flux",
@@ -814,7 +818,20 @@ export default {
     "providers": {
       "openai": "OpenAI",
       "anthropic": "Anthropique",
-      "gemini": "Gémeaux"
+      "gemini": "Gémeaux",
+      "grok": "Grok",
+      "antigravity": "Antigravity",
+      "kimi": "Kimi",
+      "zhipu": "Zhipu",
+      "deepseek": "DeepSeek"
+    },
+    "quotaState": {
+      "fresh": "Quota à jour",
+      "stale": "Quota obsolète",
+      "failed": "Échec du quota",
+      "unknown": "Quota inconnu",
+      "observed": "Quota observé",
+      "billing_observed": "Facturation observée"
     },
     "extraModelsHeader": "Modèles supplémentaires",
     "extraModelsEmpty": "Pas de modèles supplémentaires",
@@ -1081,6 +1098,7 @@ export default {
     "securityDescription": "Le mot de passe, l'authentification à deux facteurs et les alertes vivent dans le rail droit.",
     "administrator": "Administrateur",
     "user": "Utilisateur",
+    "unknownRole": "Inconnu ({role})",
     "username": "Nom d'utilisateur",
     "email": "Courriel",
     "status": "État",

@@ -115,6 +115,7 @@ func NewGatewayHandler(
 // Messages handles Claude API compatible messages endpoint
 // POST /v1/messages
 func (h *GatewayHandler) Messages(c *gin.Context) {
+	requestStart := time.Now()
 	// 从context获取apiKey和user（ApiKeyAuth中间件已设置）
 	apiKey, ok := middleware2.GetAPIKeyFromContext(c)
 	if !ok {
@@ -208,6 +209,8 @@ func (h *GatewayHandler) Messages(c *gin.Context) {
 
 	// 获取订阅信息（可能为nil）- 提前获取用于后续检查
 	subscription, _ := middleware2.GetSubscriptionFromContext(c)
+	service.SetOpsLatencyMs(c, service.OpsAuthLatencyMsKey, time.Since(requestStart).Milliseconds())
+	routingStart := time.Now()
 
 	// 0. 检查wait队列是否已满
 	maxWait := service.CalculateMaxWait(subject.Concurrency)
@@ -756,6 +759,8 @@ func (h *GatewayHandler) Messages(c *gin.Context) {
 			body = parsedReq.Body
 
 			// 转发请求 - 根据账号平台分流
+			service.SetOpsLatencyMs(c, service.OpsRoutingLatencyMsKey, time.Since(routingStart).Milliseconds())
+			forwardStart := time.Now()
 			c.Set("parsed_request", parsedReq)
 			var result *service.ForwardResult
 			requestCtx := c.Request.Context()
@@ -768,6 +773,16 @@ func (h *GatewayHandler) Messages(c *gin.Context) {
 				result, err = h.antigravityGatewayService.Forward(requestCtx, c, account, body, hasBoundSession)
 			} else {
 				result, err = h.gatewayService.Forward(requestCtx, c, account, parsedReq)
+			}
+			forwardDurationMs := time.Since(forwardStart).Milliseconds()
+			upstreamLatencyMs, _ := getContextInt64(c, service.OpsUpstreamLatencyMsKey)
+			responseLatencyMs := forwardDurationMs
+			if upstreamLatencyMs > 0 && forwardDurationMs > upstreamLatencyMs {
+				responseLatencyMs = forwardDurationMs - upstreamLatencyMs
+			}
+			service.SetOpsLatencyMs(c, service.OpsResponseLatencyMsKey, responseLatencyMs)
+			if err == nil && result != nil && result.FirstTokenMs != nil {
+				service.SetOpsLatencyMs(c, service.OpsTimeToFirstTokenMsKey, int64(*result.FirstTokenMs))
 			}
 
 			// 兜底释放串行锁（正常情况已通过回调提前释放）

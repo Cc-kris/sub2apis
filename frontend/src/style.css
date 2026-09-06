@@ -89,6 +89,11 @@
     @apply hover:border-gray-300 dark:hover:border-dark-500;
   }
 
+  /* Keep disabled secondary actions readable while preserving the disabled state. */
+  .btn-secondary:disabled {
+    @apply text-gray-500 opacity-100 dark:text-gray-400;
+  }
+
   .btn-ghost {
     @apply bg-transparent text-gray-600 dark:text-gray-300;
     @apply hover:bg-gray-100 dark:hover:bg-dark-800;
@@ -571,7 +576,7 @@
   .sidebar-section-title {
     @apply mb-2 px-3;
     @apply text-xs font-semibold uppercase tracking-wider;
-    @apply text-gray-400 dark:text-dark-500;
+    @apply text-gray-600 dark:text-dark-400;
   }
 
   /* ============ 页面头部 ============ */

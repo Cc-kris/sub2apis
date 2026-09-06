@@ -20,6 +20,7 @@ type dashboardUsageRepoCapture struct {
 	modelRequestType *int16
 	modelStream      *bool
 	rankingLimit     int
+	rankingUserID    []int64
 	ranking          []usagestats.UserSpendingRankingItem
 	rankingTotal     float64
 }
@@ -56,8 +57,10 @@ func (s *dashboardUsageRepoCapture) GetUserSpendingRanking(
 	ctx context.Context,
 	startTime, endTime time.Time,
 	limit int,
+	userID ...int64,
 ) (*usagestats.UserSpendingRankingResponse, error) {
 	s.rankingLimit = limit
+	s.rankingUserID = userID
 	return &usagestats.UserSpendingRankingResponse{
 		Ranking:         s.ranking,
 		TotalActualCost: s.rankingTotal,
@@ -198,4 +201,28 @@ func TestDashboardUsersRankingLimitAndCache(t *testing.T) {
 
 	require.Equal(t, http.StatusOK, rec2.Code)
 	require.Equal(t, "hit", rec2.Header().Get("X-Snapshot-Cache"))
+}
+
+func TestDashboardUsersRankingUserIDFilter(t *testing.T) {
+	dashboardUsersRankingCache = newSnapshotCache(5 * time.Minute)
+	repo := &dashboardUsageRepoCapture{}
+	router := newDashboardRequestTypeTestRouter(repo)
+
+	req := httptest.NewRequest(http.MethodGet, "/admin/dashboard/users-ranking?user_id=7&start_date=2025-01-01&end_date=2025-01-02", nil)
+	rec := httptest.NewRecorder()
+	router.ServeHTTP(rec, req)
+
+	require.Equal(t, http.StatusOK, rec.Code)
+	require.Equal(t, []int64{7}, repo.rankingUserID)
+}
+
+func TestDashboardUsersRankingInvalidUserID(t *testing.T) {
+	repo := &dashboardUsageRepoCapture{}
+	router := newDashboardRequestTypeTestRouter(repo)
+
+	req := httptest.NewRequest(http.MethodGet, "/admin/dashboard/users-ranking?user_id=bad", nil)
+	rec := httptest.NewRecorder()
+	router.ServeHTTP(rec, req)
+
+	require.Equal(t, http.StatusBadRequest, rec.Code)
 }

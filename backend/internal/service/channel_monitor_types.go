@@ -2,6 +2,19 @@ package service
 
 import "time"
 
+type ChannelMonitorAccountOption struct {
+	ID       int64  `json:"id"`
+	Name     string `json:"name"`
+	Platform string `json:"platform"`
+	Status   string `json:"status"`
+}
+
+type ChannelMonitorQuotaSnapshot struct {
+	State     string         `json:"state"`
+	UpdatedAt *time.Time     `json:"updated_at,omitempty"`
+	Summary   map[string]any `json:"summary,omitempty"`
+}
+
 // MonitorBodyOverrideMode 自定义请求体处理模式。
 //
 //   - off     使用 adapter 默认 body（忽略 BodyOverride）
@@ -31,6 +44,8 @@ type ChannelMonitor struct {
 	ID              int64
 	Name            string
 	Provider        string
+	Mode            string
+	AccountID       *int64
 	APIMode         string
 	Endpoint        string
 	APIKey          string // 解密后的明文 API Key（仅在 service 内部使用，handler 层不应直接序列化返回）
@@ -68,6 +83,8 @@ type ChannelMonitorListParams struct {
 type ChannelMonitorCreateParams struct {
 	Name             string
 	Provider         string
+	Mode             string
+	AccountID        *int64
 	APIMode          string
 	Endpoint         string
 	APIKey           string
@@ -95,6 +112,8 @@ type ChannelMonitorImportAccountsResult struct {
 type ChannelMonitorUpdateParams struct {
 	Name            *string
 	Provider        *string
+	Mode            *string
+	AccountID       **int64
 	APIMode         *string
 	Endpoint        *string
 	APIKey          *string // 空字符串表示不修改；非空字符串覆盖

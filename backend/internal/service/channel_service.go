@@ -23,6 +23,7 @@ var (
 		"GROUP_ALREADY_IN_CHANNEL",
 		"one or more groups already belong to another channel",
 	)
+	ErrSalesPricingResolverDisabled = infraerrors.Conflict("SALES_PRICING_RESOLVER_DISABLED", "sales pricing resolver is disabled")
 )
 
 // ChannelRepository 渠道数据访问接口
@@ -184,9 +185,14 @@ type ChannelService struct {
 	groupRepo            GroupRepository
 	authCacheInvalidator APIKeyAuthCacheInvalidator
 	pricingService       *PricingService // 用于「可用渠道」展示时回落到全局定价；可为 nil（测试场景）
+	settingService       *SettingService
 
 	cache   atomic.Value // *channelCache
 	cacheSF singleflight.Group
+}
+
+func (s *ChannelService) SetSettingService(settingService *SettingService) {
+	s.settingService = settingService
 }
 
 // NewChannelService 创建渠道服务实例。
@@ -773,6 +779,9 @@ func formatMaxTokens(max *int) string {
 
 // Create 创建渠道
 func (s *ChannelService) Create(ctx context.Context, input *CreateChannelInput) (*Channel, error) {
+	if (len(input.ModelPricing) > 0 || input.ApplyPricingToAccountStats || len(input.AccountStatsPricingRules) > 0) && s.settingService != nil && !s.settingService.IsSalesPricingResolverEnabled(ctx) {
+		return nil, ErrSalesPricingResolverDisabled
+	}
 	exists, err := s.repo.ExistsByName(ctx, input.Name)
 	if err != nil {
 		return nil, fmt.Errorf("check channel exists: %w", err)
@@ -839,6 +848,9 @@ func (s *ChannelService) GetByID(ctx context.Context, id int64) (*Channel, error
 
 // Update 更新渠道
 func (s *ChannelService) Update(ctx context.Context, id int64, input *UpdateChannelInput) (*Channel, error) {
+	if (input.ModelPricing != nil || input.ApplyPricingToAccountStats != nil || input.AccountStatsPricingRules != nil) && s.settingService != nil && !s.settingService.IsSalesPricingResolverEnabled(ctx) {
+		return nil, ErrSalesPricingResolverDisabled
+	}
 	channel, err := s.repo.GetByID(ctx, id)
 	if err != nil {
 		return nil, fmt.Errorf("get channel: %w", err)
@@ -1026,6 +1038,9 @@ func (s *ChannelService) invalidateAuthCacheForGroups(ctx context.Context, group
 
 // Delete 删除渠道
 func (s *ChannelService) Delete(ctx context.Context, id int64) error {
+	if s.settingService != nil && !s.settingService.IsSalesPricingResolverEnabled(ctx) {
+		return ErrSalesPricingResolverDisabled
+	}
 	groupIDs, err := s.repo.GetGroupIDs(ctx, id)
 	if err != nil {
 		slog.Warn("failed to get group IDs before delete", "channel_id", id, "error", err)
@@ -1114,6 +1129,13 @@ func validateNoConflictingMappings(mapping map[string]map[string]string) error {
 
 func validatePricingIntervals(pricingList []ChannelModelPricing) error {
 	for _, pricing := range pricingList {
+		if err := pricing.ValidateModifiers(); err != nil {
+			return infraerrors.BadRequest(
+				"INVALID_TIME_PRICING",
+				fmt.Sprintf("invalid time pricing for platform '%s' models %v: %v",
+					pricing.Platform, pricing.Models, err),
+			)
+		}
 		if err := ValidateIntervals(pricing.Intervals, pricing.BillingMode); err != nil {
 			return infraerrors.BadRequest(
 				"INVALID_PRICING_INTERVALS",

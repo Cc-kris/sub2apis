@@ -227,6 +227,38 @@ describe('BulkEditAccountModal', () => {
     })
   })
 
+  it('OpenAI OAuth 批量编辑应提交 codex_identity_mode 字段', async () => {
+    const wrapper = mountModal({
+      selectedPlatforms: ['openai'],
+      selectedTypes: ['oauth']
+    })
+
+    await wrapper.get('#bulk-edit-openai-codex-identity-enabled').setValue(true)
+    await wrapper.get('[data-testid="bulk-edit-openai-codex-identity-mode-select"]').setValue('session')
+    await wrapper.get('#bulk-edit-account-form').trigger('submit.prevent')
+    await flushPromises()
+
+    expect(adminAPI.accounts.bulkUpdate).toHaveBeenCalledWith([1, 2], {
+      extra: { codex_identity_mode: 'session' }
+    })
+  })
+
+  it('OpenAI API Key 批量编辑应提交 structured_output_mode 字段', async () => {
+    const wrapper = mountModal({
+      selectedPlatforms: ['openai'],
+      selectedTypes: ['apikey']
+    })
+
+    await wrapper.get('#bulk-edit-openai-structured-output-enabled').setValue(true)
+    await wrapper.get('[data-testid="bulk-edit-openai-structured-output-mode-select"]').setValue('force_non_strict')
+    await wrapper.get('#bulk-edit-account-form').trigger('submit.prevent')
+    await flushPromises()
+
+    expect(adminAPI.accounts.bulkUpdate).toHaveBeenCalledWith([1, 2], {
+      extra: { structured_output_mode: 'force_non_strict' }
+    })
+  })
+
   it('OpenAI API Key 批量编辑应提交 API Key 专属 WS mode 字段', async () => {
     const wrapper = mountModal({
       selectedPlatforms: ['openai'],
@@ -360,5 +392,22 @@ describe('BulkEditAccountModal', () => {
       },
       status: 'active'
     })
+  })
+
+  it('真实 API 返回 422 时保留已填写字段', async () => {
+    vi.mocked(adminAPI.accounts.bulkUpdate).mockRejectedValueOnce({ status: 422, message: '字段不适用' })
+    const wrapper = mountModal({
+      selectedPlatforms: ['openai'],
+      selectedTypes: ['apikey']
+    })
+
+    await wrapper.get('#bulk-edit-base-url-enabled').setValue(true)
+    const baseURLInput = wrapper.get('#bulk-edit-base-url')
+    await baseURLInput.setValue('https://retry.example.invalid')
+    await wrapper.get('#bulk-edit-account-form').trigger('submit.prevent')
+    await flushPromises()
+
+    expect((baseURLInput.element as HTMLInputElement).value).toBe('https://retry.example.invalid')
+    expect(wrapper.find('#bulk-edit-account-form').exists()).toBe(true)
   })
 })

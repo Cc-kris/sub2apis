@@ -40,7 +40,8 @@ func RegisterGatewayRoutes(
 	requireGroupGoogle := middleware.RequireGroupAssignment(settingService, middleware.GoogleErrorWriter)
 	isOpenAICompatiblePlatform := func(c *gin.Context) bool {
 		platform := getGroupPlatform(c)
-		return platform == service.PlatformOpenAI || platform == service.PlatformGrok
+		return platform == service.PlatformOpenAI || platform == service.PlatformGrok ||
+			platform == service.PlatformKimi || platform == service.PlatformZhipu || platform == service.PlatformDeepSeek
 	}
 	imagesHandler := func(c *gin.Context) {
 		switch getGroupPlatform(c) {
@@ -233,6 +234,7 @@ func RegisterGatewayRoutes(
 		h.Gateway.ChatCompletions(c)
 	})
 	r.POST("/images/generations", bodyLimit, largeRequestLimit, clientRequestID, opsErrorLogger, endpointNorm, gin.HandlerFunc(apiKeyAuth), requireGroupAnthropic, imagesHandler)
+	r.POST("/x_search", bodyLimit, largeRequestLimit, clientRequestID, opsErrorLogger, endpointNorm, gin.HandlerFunc(apiKeyAuth), requireGroupAnthropic, h.OpenAIGateway.XSearch)
 	r.POST("/images/edits", bodyLimit, largeRequestLimit, clientRequestID, opsErrorLogger, endpointNorm, gin.HandlerFunc(apiKeyAuth), requireGroupAnthropic, imagesHandler)
 	r.POST("/videos/generations", bodyLimit, largeRequestLimit, clientRequestID, opsErrorLogger, endpointNorm, gin.HandlerFunc(apiKeyAuth), requireGroupAnthropic, videoGenerationHandler)
 	r.POST("/videos/edits", bodyLimit, largeRequestLimit, clientRequestID, opsErrorLogger, endpointNorm, gin.HandlerFunc(apiKeyAuth), requireGroupAnthropic, videoEditHandler)

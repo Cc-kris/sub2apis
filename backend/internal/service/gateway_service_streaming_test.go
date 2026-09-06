@@ -5,6 +5,7 @@ import (
 	"io"
 	"net/http"
 	"net/http/httptest"
+	"net/http/httptrace"
 	"testing"
 	"time"
 
@@ -53,13 +54,45 @@ func TestGatewayService_StreamingReusesScannerBufferAndStillParsesUsage(t *testi
 	require.Equal(t, 7, result.usage.OutputTokens)
 }
 
-func TestDetachUpstreamContextIgnoresClientCancel(t *testing.T) {
+func TestDetachUpstreamContextCancelsBeforeResponseStarts(t *testing.T) {
 	parent, cancel := context.WithCancel(context.WithValue(context.Background(), upstreamContextTestKey("test-key"), "test-value"))
-	upstreamCtx, release := detachUpstreamContext(parent)
-	defer release()
+	upstreamCtx, _ := detachUpstreamContext(parent)
+	defer ReleaseDetachedUpstreamContext(upstreamCtx)
 
+	cancel()
+
+	select {
+	case <-upstreamCtx.Done():
+	case <-time.After(time.Second):
+		t.Fatal("upstream context was not canceled with the client before response start")
+	}
+	require.ErrorIs(t, upstreamCtx.Err(), context.Canceled)
+	require.Equal(t, "test-value", upstreamCtx.Value(upstreamContextTestKey("test-key")))
+}
+
+func TestDetachUpstreamContextAllowsBoundedDrainAfterResponseStarts(t *testing.T) {
+	parent, cancel := context.WithCancel(context.WithValue(context.Background(), upstreamContextTestKey("test-key"), "test-value"))
+	upstreamCtx, _ := detachUpstreamContext(parent)
+	defer ReleaseDetachedUpstreamContext(upstreamCtx)
+
+	trace := httptrace.ContextClientTrace(upstreamCtx)
+	require.NotNil(t, trace)
+	require.NotNil(t, trace.GotFirstResponseByte)
+	trace.GotFirstResponseByte()
 	cancel()
 
 	require.NoError(t, upstreamCtx.Err())
 	require.Equal(t, "test-value", upstreamCtx.Value(upstreamContextTestKey("test-key")))
+}
+
+func TestDetachUpstreamContextHasHardLifetimeLimit(t *testing.T) {
+	upstreamCtx, _ := detachUpstreamContextWithTimeout(context.Background(), 20*time.Millisecond)
+	defer ReleaseDetachedUpstreamContext(upstreamCtx)
+
+	select {
+	case <-upstreamCtx.Done():
+	case <-time.After(time.Second):
+		t.Fatal("detached upstream context exceeded its hard lifetime limit")
+	}
+	require.ErrorIs(t, upstreamCtx.Err(), context.DeadlineExceeded)
 }

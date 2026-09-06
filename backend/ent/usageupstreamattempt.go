@@ -39,6 +39,8 @@ type UsageUpstreamAttempt struct {
 	OutputTokens int64 `json:"output_tokens,omitempty"`
 	// CacheReadTokens holds the value of the "cache_read_tokens" field.
 	CacheReadTokens int64 `json:"cache_read_tokens,omitempty"`
+	// CacheCreationTokens holds the value of the "cache_creation_tokens" field.
+	CacheCreationTokens int64 `json:"cache_creation_tokens,omitempty"`
 	// CacheCreation5mTokens holds the value of the "cache_creation_5m_tokens" field.
 	CacheCreation5mTokens int64 `json:"cache_creation_5m_tokens,omitempty"`
 	// CacheCreation1hTokens holds the value of the "cache_creation_1h_tokens" field.
@@ -95,7 +97,7 @@ func (*UsageUpstreamAttempt) scanValues(columns []string) ([]any, error) {
 			values[i] = new([]byte)
 		case usageupstreamattempt.FieldBillable:
 			values[i] = new(sql.NullBool)
-		case usageupstreamattempt.FieldID, usageupstreamattempt.FieldUsageLogID, usageupstreamattempt.FieldAttemptNo, usageupstreamattempt.FieldAccountID, usageupstreamattempt.FieldChannelID, usageupstreamattempt.FieldInputTokens, usageupstreamattempt.FieldOutputTokens, usageupstreamattempt.FieldCacheReadTokens, usageupstreamattempt.FieldCacheCreation5mTokens, usageupstreamattempt.FieldCacheCreation1hTokens, usageupstreamattempt.FieldRequestCount, usageupstreamattempt.FieldImageCount, usageupstreamattempt.FieldVideoSeconds, usageupstreamattempt.FieldUpstreamMultiplierChangeID, usageupstreamattempt.FieldAccountFinanceProfileID:
+		case usageupstreamattempt.FieldID, usageupstreamattempt.FieldUsageLogID, usageupstreamattempt.FieldAttemptNo, usageupstreamattempt.FieldAccountID, usageupstreamattempt.FieldChannelID, usageupstreamattempt.FieldInputTokens, usageupstreamattempt.FieldOutputTokens, usageupstreamattempt.FieldCacheReadTokens, usageupstreamattempt.FieldCacheCreationTokens, usageupstreamattempt.FieldCacheCreation5mTokens, usageupstreamattempt.FieldCacheCreation1hTokens, usageupstreamattempt.FieldRequestCount, usageupstreamattempt.FieldImageCount, usageupstreamattempt.FieldVideoSeconds, usageupstreamattempt.FieldUpstreamMultiplierChangeID, usageupstreamattempt.FieldAccountFinanceProfileID:
 			values[i] = new(sql.NullInt64)
 		case usageupstreamattempt.FieldRequestID, usageupstreamattempt.FieldUpstreamModel, usageupstreamattempt.FieldServiceTier, usageupstreamattempt.FieldUpstreamMultiplierSource, usageupstreamattempt.FieldUpstreamChargeCurrency, usageupstreamattempt.FieldUpstreamChargeUnitSemantics, usageupstreamattempt.FieldUpstreamBillingRequestID:
 			values[i] = new(sql.NullString)
@@ -183,6 +185,12 @@ func (_m *UsageUpstreamAttempt) assignValues(columns []string, values []any) err
 				return fmt.Errorf("unexpected type %T for field cache_read_tokens", values[i])
 			} else if value.Valid {
 				_m.CacheReadTokens = value.Int64
+			}
+		case usageupstreamattempt.FieldCacheCreationTokens:
+			if value, ok := values[i].(*sql.NullInt64); !ok {
+				return fmt.Errorf("unexpected type %T for field cache_creation_tokens", values[i])
+			} else if value.Valid {
+				_m.CacheCreationTokens = value.Int64
 			}
 		case usageupstreamattempt.FieldCacheCreation5mTokens:
 			if value, ok := values[i].(*sql.NullInt64); !ok {
@@ -393,6 +401,9 @@ func (_m *UsageUpstreamAttempt) String() string {
 	builder.WriteString(", ")
 	builder.WriteString("cache_read_tokens=")
 	builder.WriteString(fmt.Sprintf("%v", _m.CacheReadTokens))
+	builder.WriteString(", ")
+	builder.WriteString("cache_creation_tokens=")
+	builder.WriteString(fmt.Sprintf("%v", _m.CacheCreationTokens))
 	builder.WriteString(", ")
 	builder.WriteString("cache_creation_5m_tokens=")
 	builder.WriteString(fmt.Sprintf("%v", _m.CacheCreation5mTokens))

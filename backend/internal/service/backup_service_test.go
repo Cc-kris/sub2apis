@@ -178,6 +178,17 @@ func (m *mockObjectStore) Upload(_ context.Context, key string, body io.Reader, 
 	return int64(len(data)), nil
 }
 
+func (m *mockObjectStore) UploadPart(_ context.Context, key string, partNo int, body io.Reader, _ string) (int64, string, error) {
+	data, err := io.ReadAll(body)
+	if err != nil {
+		return 0, "", err
+	}
+	m.mu.Lock()
+	m.objects[fmt.Sprintf("%s.part-%05d", key, partNo)] = data
+	m.mu.Unlock()
+	return int64(len(data)), "", nil
+}
+
 func (m *mockObjectStore) Download(_ context.Context, key string) (io.ReadCloser, error) {
 	m.mu.Lock()
 	data, ok := m.objects[key]
@@ -186,6 +197,10 @@ func (m *mockObjectStore) Download(_ context.Context, key string) (io.ReadCloser
 		return nil, fmt.Errorf("not found: %s", key)
 	}
 	return io.NopCloser(bytes.NewReader(data)), nil
+}
+
+func (m *mockObjectStore) DownloadPart(ctx context.Context, key string, partNo int) (io.ReadCloser, error) {
+	return m.Download(ctx, fmt.Sprintf("%s.part-%05d", key, partNo))
 }
 
 func (m *mockObjectStore) Delete(_ context.Context, key string) error {

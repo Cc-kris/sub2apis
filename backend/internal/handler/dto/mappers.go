@@ -166,6 +166,8 @@ func GroupFromServiceAdmin(g *service.Group) *AdminGroup {
 		ActiveAccountCount:          g.ActiveAccountCount,
 		RateLimitedAccountCount:     g.RateLimitedAccountCount,
 		SortOrder:                   g.SortOrder,
+		LongContextPricingEnabled:   g.LongContextPricingEnabled,
+		ModelPricing:                g.ModelPricing,
 	}
 	if len(g.AccountGroups) > 0 {
 		out.AccountGroups = make([]AccountGroup, 0, len(g.AccountGroups))
@@ -219,6 +221,9 @@ func accountExtraForResponse(extra map[string]any) map[string]any {
 	}
 	out := make(map[string]any, len(extra))
 	for k, v := range extra {
+		if service.IsSensitiveAccountExtraKey(k) {
+			continue
+		}
 		out[k] = v
 	}
 	delete(out, "upstream_warning_amount")

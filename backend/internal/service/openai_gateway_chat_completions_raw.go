@@ -155,7 +155,7 @@ func (s *OpenAIGatewayService) forwardAsRawChatCompletions(
 		}
 		SetActualOpenAIUpstreamEndpoint(c, grokChatRawEndpoint)
 	} else {
-		baseURL := account.GetOpenAIBaseURL()
+		baseURL := account.GetOpenAIBaseURLForProtocol(OpenAIAPIProtocolChat)
 		if baseURL == "" {
 			baseURL = "https://api.openai.com"
 		}
@@ -200,13 +200,16 @@ func (s *OpenAIGatewayService) forwardAsRawChatCompletions(
 	} else if customUA := account.GetOpenAIUserAgent(); customUA != "" {
 		upstreamReq.Header.Set("user-agent", customUA)
 	}
+	resolveOpenAIAgentIdentity(account).ApplyTo(upstreamReq.Header, nil)
 
 	// 6. Send request
 	proxyURL := ""
 	if account.Proxy != nil {
 		proxyURL = account.Proxy.URL()
 	}
+	upstreamStart := time.Now()
 	resp, err := s.httpUpstream.Do(upstreamReq, proxyURL, account.ID, account.Concurrency)
+	SetOpsLatencyMs(c, OpsUpstreamLatencyMsKey, time.Since(upstreamStart).Milliseconds())
 	if err != nil {
 		return nil, s.handleOpenAIUpstreamTransportError(ctx, c, account, err, false)
 	}

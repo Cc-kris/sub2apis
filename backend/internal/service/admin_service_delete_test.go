@@ -13,19 +13,31 @@ import (
 )
 
 type userRepoStub struct {
-	user          *User
-	getErr        error
-	createErr     error
-	deleteErr     error
-	exists        bool
-	existsErr     error
-	nextID        int64
-	created       []*User
-	updated       []*User
-	deletedIDs    []int64
-	usersByEmail  map[string]*User
-	getByEmailErr error
+	user              *User
+	getErr            error
+	createErr         error
+	deleteErr         error
+	exists            bool
+	existsErr         error
+	nextID            int64
+	created           []*User
+	updated           []*User
+	deletedIDs        []int64
+	usersByEmail      map[string]*User
+	getByEmailErr     error
+	domainCreateErr   error
+	domainCreateCalls int
 }
+
+func (s *userRepoStub) CreateWithRegistrationDomainLimit(ctx context.Context, user *User, limit int) error {
+	s.domainCreateCalls++
+	if s.domainCreateErr != nil {
+		return s.domainCreateErr
+	}
+	return s.Create(ctx, user)
+}
+
+func (s *userRepoStub) CountByEmailDomain(context.Context, string) (int, error) { return 0, nil }
 
 func (s *userRepoStub) Create(ctx context.Context, user *User) error {
 	if s.createErr != nil {

@@ -40,6 +40,7 @@ type SeedaceVideoService struct {
 	userPlatformQuotaRepo UserPlatformQuotaRepository
 	httpUpstream          HTTPUpstream
 	cfg                   *config.Config
+	settingService        *SettingService
 }
 
 type SeedaceVideoCreateInput struct {
@@ -86,7 +87,12 @@ func NewSeedaceVideoService(
 	userPlatformQuotaRepo UserPlatformQuotaRepository,
 	httpUpstream HTTPUpstream,
 	cfg *config.Config,
+	settingServices ...*SettingService,
 ) *SeedaceVideoService {
+	var settingService *SettingService
+	if len(settingServices) > 0 {
+		settingService = settingServices[0]
+	}
 	return &SeedaceVideoService{
 		accountRepo:           accountRepo,
 		usageLogRepo:          usageLogRepo,
@@ -103,6 +109,7 @@ func NewSeedaceVideoService(
 		userPlatformQuotaRepo: userPlatformQuotaRepo,
 		httpUpstream:          httpUpstream,
 		cfg:                   cfg,
+		settingService:        settingService,
 	}
 }
 
@@ -205,6 +212,13 @@ func (s *SeedaceVideoService) ensureCreatePricingConfigured(ctx context.Context,
 		return errors.New("api key is required")
 	}
 	model, _ := normalizeSeedaceVideoMeter(req)
+	if s.settingService != nil && !s.settingService.IsSalesPricingResolverEnabled(ctx) {
+		resolution := seedaceLegacyResolution(model)
+		if !apiKeyHasConfiguredVideoPrice(apiKey, resolution) {
+			return fmt.Errorf("seedace legacy video pricing is not configured for model %s", model)
+		}
+		return nil
+	}
 	resolved := s.resolvePricing(ctx, apiKey.GroupID, model)
 	if resolved == nil || resolved.Mode != BillingModePerSecond || resolved.DefaultPerRequestPrice <= 0 {
 		return fmt.Errorf("seedace per-second pricing is not configured for model %s", model)
@@ -267,7 +281,11 @@ func (s *SeedaceVideoService) recordCreateUsage(ctx context.Context, account *Ac
 	}
 	model, durationSeconds := normalizeSeedaceVideoMeter(req)
 	groupID := input.APIKey.GroupID
-	resolved := s.resolvePricing(ctx, groupID, model)
+	resolverEnabled := s.settingService == nil || s.settingService.IsSalesPricingResolverEnabled(ctx)
+	var resolved *ResolvedPricing
+	if resolverEnabled {
+		resolved = s.resolvePricing(ctx, groupID, model)
+	}
 	unitPrice := 0.0
 	if resolved != nil {
 		unitPrice = resolved.DefaultPerRequestPrice
@@ -283,13 +301,14 @@ func (s *SeedaceVideoService) recordCreateUsage(ctx context.Context, account *Ac
 		groupMultiplier = 1.0
 	}
 	accountRateMultiplier := account.BillingRateMultiplier()
-	totalCost := unitPrice * float64(durationSeconds)
-	actualCost := totalCost * groupMultiplier
-	cost := &CostBreakdown{
-		TotalCost:   totalCost,
-		ActualCost:  actualCost,
-		BillingMode: string(BillingModePerSecond),
+	var cost *CostBreakdown
+	if resolverEnabled {
+		totalCost := unitPrice * float64(durationSeconds)
+		cost = &CostBreakdown{TotalCost: totalCost, ActualCost: totalCost * groupMultiplier, BillingMode: string(BillingModePerSecond)}
+	} else {
+		cost = s.billingService.CalculateVideoCost(model, seedaceLegacyResolution(model), 1, durationSeconds, videoPriceConfigFromAPIKey(input.APIKey), groupMultiplier)
 	}
+	totalCost, actualCost := cost.TotalCost, cost.ActualCost
 
 	taskID := extractSeedaceTaskID(upstreamBody)
 	requestID := resolveUsageBillingRequestID(ctx, taskID)
@@ -365,6 +384,17 @@ func (s *SeedaceVideoService) recordCreateUsage(ctx context.Context, account *Ac
 	return nil
 }
 
+func seedaceLegacyResolution(model string) string {
+	lower := strings.ToLower(model)
+	if strings.Contains(lower, "1080") {
+		return VideoBillingResolution1080P
+	}
+	if strings.Contains(lower, "480") {
+		return VideoBillingResolution480P
+	}
+	return VideoBillingResolution720P
+}
+
 func (s *SeedaceVideoService) writeUnbilledCreateUsage(ctx context.Context, account *Account, input SeedaceVideoCreateInput, req seedaceVideoRequest, upstreamBody []byte, billingErr error) {
 	if s == nil || s.usageLogRepo == nil || account == nil || input.APIKey == nil || input.APIKey.User == nil {
 		return
@@ -412,6 +442,9 @@ func (s *SeedaceVideoService) writeUnbilledCreateUsage(ctx context.Context, acco
 }
 
 func (s *SeedaceVideoService) resolvePricing(ctx context.Context, groupID *int64, model string) *ResolvedPricing {
+	if s.settingService != nil && !s.settingService.IsSalesPricingResolverEnabled(ctx) {
+		return &ResolvedPricing{Mode: BillingModePerSecond, Source: PricingSourceFallback}
+	}
 	if s.modelPricingResolver != nil {
 		resolved := s.modelPricingResolver.Resolve(ctx, PricingInput{Model: model, GroupID: groupID})
 		if resolved != nil && resolved.Mode == BillingModePerSecond {

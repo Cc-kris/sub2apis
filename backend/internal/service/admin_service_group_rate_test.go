@@ -223,3 +223,14 @@ func TestAdminService_BatchSetGroupRPMOverrides(t *testing.T) {
 		require.Zero(t, repo.rpmSyncedGroupID)
 	})
 }
+
+func TestAdminServiceGroupRateWritesBlockedWhenSalesPricingResolverDisabled(t *testing.T) {
+	repo := &userGroupRateRepoStubForGroupRate{}
+	settings := NewSettingService(&settingUpdateRepoStub{values: map[string]string{SettingKeySalesPricingResolverEnabled: "false"}}, nil)
+	svc := &adminServiceImpl{userGroupRateRepo: repo, settingService: settings}
+
+	require.ErrorIs(t, svc.BatchSetGroupRateMultipliers(context.Background(), 10, []GroupRateMultiplierInput{{UserID: 1, RateMultiplier: 1}}), ErrSalesPricingResolverDisabled)
+	require.ErrorIs(t, svc.ClearGroupRateMultipliers(context.Background(), 10), ErrSalesPricingResolverDisabled)
+	require.Zero(t, repo.syncedGroupID)
+	require.Empty(t, repo.deletedGroupIDs)
+}

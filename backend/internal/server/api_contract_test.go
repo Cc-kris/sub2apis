@@ -11,6 +11,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"sort"
+	"strings"
 	"testing"
 	"time"
 
@@ -683,7 +684,12 @@ func TestAPIContracts(t *testing.T) {
 					"email_verify_enabled": false,
 					"registration_email_suffix_whitelist": [],
 					"promo_code_enabled": true,
-					"password_reset_enabled": false,
+						"password_reset_enabled": false,
+						"announcement_translation_api_key_configured": false,
+						"announcement_translation_base_url": "",
+						"announcement_translation_enabled": false,
+						"announcement_translation_model": "",
+						"announcement_translation_timeout_seconds": 90,
 						"frontend_url": "",
 						"local_response_cache_enabled": false,
 						"totp_enabled": false,
@@ -729,6 +735,7 @@ func TestAPIContracts(t *testing.T) {
 						"dingtalk_connect_sync_display_name_attr_name": "钉钉姓名",
 						"oidc_connect_enabled": false,
 						"oidc_connect_provider_name": "OIDC",
+						"group_usage_rollup_enabled": true,
 						"oidc_connect_client_id": "",
 						"oidc_connect_client_secret_configured": false,
 						"oidc_connect_issuer_url": "",
@@ -829,11 +836,13 @@ func TestAPIContracts(t *testing.T) {
 						"fallback_model_openai": "gpt-4o",
 						"enable_identity_patch": true,
 						"identity_patch_prompt": "",
-						"invitation_code_enabled": false,
+					"invitation_code_enabled": false,
 						"home_content": "",
 					"hide_ccs_import_button": false,
 					"purchase_subscription_enabled": false,
 					"purchase_subscription_url": "",
+					"registration_domain_limit_enabled": false,
+					"registration_domain_limit_per_domain": 3,
 					"table_default_page_size": 20,
 						"table_page_size_options": [10, 20, 50, 100],
 					"min_claude_code_version": "",
@@ -856,6 +865,8 @@ func TestAPIContracts(t *testing.T) {
 					"openai_fast_policy_settings": {
 						"rules": []
 					},
+					"openai_remote_compaction_v2_enabled": true,
+					"openai_team_linked_resolver_enabled": true,
 					"custom_menu_items": [],
 					"custom_endpoints": [],
 					"payment_enabled": false,
@@ -894,6 +905,7 @@ func TestAPIContracts(t *testing.T) {
 					"sales_pricing_version":            "legacy",
 					"sales_pricing_shadow_started_at":  null,
 					"sales_pricing_v2_enabled_at":      null,
+					"sales_pricing_resolver_enabled": true,
 					"risk_control_enabled": false,
 					"affiliate_enabled": false,
 					"wechat_connect_enabled": false,
@@ -964,6 +976,11 @@ func TestAPIContracts(t *testing.T) {
 					"frontend_url": "",
 						"local_response_cache_enabled": false,
 						"invitation_code_enabled": false,
+						"announcement_translation_api_key_configured": false,
+						"announcement_translation_base_url": "",
+						"announcement_translation_enabled": false,
+						"announcement_translation_model": "",
+						"announcement_translation_timeout_seconds": 90,
 						"totp_enabled": false,
 						"totp_encryption_key_configured": false,
 						"login_agreement_enabled": false,
@@ -1007,6 +1024,7 @@ func TestAPIContracts(t *testing.T) {
 					"dingtalk_connect_sync_display_name_attr_name": "钉钉姓名",
 					"oidc_connect_enabled": true,
 					"oidc_connect_provider_name": "ConfigOIDC",
+					"group_usage_rollup_enabled": true,
 					"oidc_connect_client_id": "oidc-config-client",
 					"oidc_connect_client_secret_configured": true,
 					"oidc_connect_issuer_url": "https://issuer.example.com",
@@ -1048,6 +1066,8 @@ func TestAPIContracts(t *testing.T) {
 					"hide_ccs_import_button": false,
 					"purchase_subscription_enabled": false,
 					"purchase_subscription_url": "",
+					"registration_domain_limit_enabled": false,
+					"registration_domain_limit_per_domain": 3,
 					"table_default_page_size": 20,
 					"table_page_size_options": [10, 20, 50],
 					"default_platform_quotas": {"anthropic":{"daily":null,"weekly":null,"monthly":null},"antigravity":{"daily":null,"weekly":null,"monthly":null},"gemini":{"daily":null,"weekly":null,"monthly":null},"openai":{"daily":null,"weekly":null,"monthly":null},"seedace":{"daily":null,"weekly":null,"monthly":null}},
@@ -1099,6 +1119,8 @@ func TestAPIContracts(t *testing.T) {
 					"openai_fast_policy_settings": {
 						"rules": []
 					},
+					"openai_remote_compaction_v2_enabled": true,
+					"openai_team_linked_resolver_enabled": true,
 					"payment_enabled": false,
 					"payment_min_amount": 0,
 					"payment_max_amount": 0,
@@ -1136,6 +1158,7 @@ func TestAPIContracts(t *testing.T) {
 					"sales_pricing_shadow_started_at":  null,
 					"sales_pricing_v2_enabled_at":      null,
 					"risk_control_enabled": false,
+					"sales_pricing_resolver_enabled": true,
 					"affiliate_enabled": false,
 					"wechat_connect_enabled": true,
 					"wechat_connect_app_id": "wx-open-config",
@@ -1411,6 +1434,16 @@ func (r *stubUserRepo) GetByEmail(ctx context.Context, email string) (*service.U
 		}
 	}
 	return nil, service.ErrUserNotFound
+}
+
+func (r *stubUserRepo) CountByEmailDomain(ctx context.Context, domain string) (int, error) {
+	count := 0
+	for _, user := range r.users {
+		if strings.HasSuffix(strings.ToLower(user.Email), "@"+strings.ToLower(domain)) {
+			count++
+		}
+	}
+	return count, nil
 }
 
 func (r *stubUserRepo) GetFirstAdmin(ctx context.Context) (*service.User, error) {
@@ -1802,6 +1835,11 @@ func (s *stubAccountRepo) ResetQuotaUsed(ctx context.Context, id int64) error {
 func (s *stubAccountRepo) BulkUpdate(ctx context.Context, ids []int64, updates service.AccountBulkUpdate) (int64, error) {
 	s.bulkUpdateIDs = append([]int64{}, ids...)
 	return int64(len(ids)), nil
+}
+
+func (s *stubAccountRepo) BulkUpdateWithGroupsValidated(ctx context.Context, ids []int64, updates service.AccountBulkUpdate, groupIDs []int64, expectedTargets []service.AccountBulkUpdateTarget, checkMixedChannel bool) ([]int64, error) {
+	s.bulkUpdateIDs = append([]int64{}, ids...)
+	return append([]int64(nil), ids...), nil
 }
 
 func (s *stubAccountRepo) ListCRSAccountIDs(ctx context.Context) (map[string]int64, error) {
@@ -2380,7 +2418,7 @@ func (r *stubUsageLogRepo) GetUserUsageTrend(ctx context.Context, startTime, end
 	return nil, errors.New("not implemented")
 }
 
-func (r *stubUsageLogRepo) GetUserSpendingRanking(ctx context.Context, startTime, endTime time.Time, limit int) (*usagestats.UserSpendingRankingResponse, error) {
+func (r *stubUsageLogRepo) GetUserSpendingRanking(ctx context.Context, startTime, endTime time.Time, limit int, userID ...int64) (*usagestats.UserSpendingRankingResponse, error) {
 	return nil, errors.New("not implemented")
 }
 

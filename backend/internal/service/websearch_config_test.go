@@ -10,6 +10,14 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
+type webSearchMissingSettingRepo struct {
+	*mockSettingRepo
+}
+
+func (r *webSearchMissingSettingRepo) GetValue(context.Context, string) (string, error) {
+	return "", ErrSettingNotFound
+}
+
 // --- validateWebSearchConfig ---
 
 func TestValidateWebSearchConfig_Nil(t *testing.T) {
@@ -96,6 +104,18 @@ func TestParseWebSearchConfigJSON_BackwardCompatibility(t *testing.T) {
 	require.True(t, cfg.Enabled)
 	require.Len(t, cfg.Providers, 1)
 	require.Equal(t, int64(1000), *cfg.Providers[0].QuotaLimit)
+}
+
+func TestGetWebSearchEmulationConfig_MissingSettingUsesDisabledDefault(t *testing.T) {
+	clearGlobalWebSearchConfig()
+	defer clearGlobalWebSearchConfig()
+
+	svc := &SettingService{settingRepo: &webSearchMissingSettingRepo{mockSettingRepo: newMockSettingRepo()}}
+	cfg, err := svc.GetWebSearchEmulationConfig(context.Background())
+
+	require.NoError(t, err)
+	require.False(t, cfg.Enabled)
+	require.Empty(t, cfg.Providers)
 }
 
 // --- SanitizeWebSearchConfig ---

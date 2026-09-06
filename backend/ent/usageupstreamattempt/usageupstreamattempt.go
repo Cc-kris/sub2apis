@@ -33,6 +33,8 @@ const (
 	FieldOutputTokens = "output_tokens"
 	// FieldCacheReadTokens holds the string denoting the cache_read_tokens field in the database.
 	FieldCacheReadTokens = "cache_read_tokens"
+	// FieldCacheCreationTokens holds the string denoting the cache_creation_tokens field in the database.
+	FieldCacheCreationTokens = "cache_creation_tokens"
 	// FieldCacheCreation5mTokens holds the string denoting the cache_creation_5m_tokens field in the database.
 	FieldCacheCreation5mTokens = "cache_creation_5m_tokens"
 	// FieldCacheCreation1hTokens holds the string denoting the cache_creation_1h_tokens field in the database.
@@ -92,6 +94,7 @@ var Columns = []string{
 	FieldInputTokens,
 	FieldOutputTokens,
 	FieldCacheReadTokens,
+	FieldCacheCreationTokens,
 	FieldCacheCreation5mTokens,
 	FieldCacheCreation1hTokens,
 	FieldRequestCount,
@@ -146,6 +149,10 @@ var (
 	DefaultCacheReadTokens int64
 	// CacheReadTokensValidator is a validator for the "cache_read_tokens" field. It is called by the builders before save.
 	CacheReadTokensValidator func(int64) error
+	// DefaultCacheCreationTokens holds the default value on creation for the "cache_creation_tokens" field.
+	DefaultCacheCreationTokens int64
+	// CacheCreationTokensValidator is a validator for the "cache_creation_tokens" field. It is called by the builders before save.
+	CacheCreationTokensValidator func(int64) error
 	// DefaultCacheCreation5mTokens holds the default value on creation for the "cache_creation_5m_tokens" field.
 	DefaultCacheCreation5mTokens int64
 	// CacheCreation5mTokensValidator is a validator for the "cache_creation_5m_tokens" field. It is called by the builders before save.
@@ -238,6 +245,11 @@ func ByOutputTokens(opts ...sql.OrderTermOption) OrderOption {
 // ByCacheReadTokens orders the results by the cache_read_tokens field.
 func ByCacheReadTokens(opts ...sql.OrderTermOption) OrderOption {
 	return sql.OrderByField(FieldCacheReadTokens, opts...).ToFunc()
+}
+
+// ByCacheCreationTokens orders the results by the cache_creation_tokens field.
+func ByCacheCreationTokens(opts ...sql.OrderTermOption) OrderOption {
+	return sql.OrderByField(FieldCacheCreationTokens, opts...).ToFunc()
 }
 
 // ByCacheCreation5mTokens orders the results by the cache_creation_5m_tokens field.

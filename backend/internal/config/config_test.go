@@ -7,6 +7,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/Wei-Shaw/sub2api/internal/util/urlvalidator"
 	"github.com/spf13/viper"
 	"github.com/stretchr/testify/require"
 )
@@ -78,6 +79,28 @@ func TestLoadDefaultSchedulingConfig(t *testing.T) {
 	}
 	if cfg.Gateway.Scheduling.SlotCleanupInterval != 30*time.Second {
 		t.Fatalf("SlotCleanupInterval = %v, want 30s", cfg.Gateway.Scheduling.SlotCleanupInterval)
+	}
+}
+
+func TestLoadDefaultUpstreamAllowlistAcceptsDomesticProviderDefaults(t *testing.T) {
+	resetViperWithJWTSecret(t)
+
+	cfg, err := Load()
+	require.NoError(t, err)
+
+	for _, rawURL := range []string{
+		"https://api.moonshot.cn",
+		"https://open.bigmodel.cn/api/paas",
+		"https://api.deepseek.com",
+	} {
+		t.Run(rawURL, func(t *testing.T) {
+			_, err := urlvalidator.ValidateHTTPSURL(rawURL, urlvalidator.ValidationOptions{
+				AllowedHosts:     cfg.Security.URLAllowlist.UpstreamHosts,
+				RequireAllowlist: true,
+				AllowPrivate:     cfg.Security.URLAllowlist.AllowPrivateHosts,
+			})
+			require.NoError(t, err)
+		})
 	}
 }
 
@@ -181,12 +204,12 @@ func TestLoadOpenAIHTTP2DisabledFromEnv(t *testing.T) {
 	require.False(t, cfg.Gateway.OpenAIHTTP2.Enabled)
 }
 
-func TestLoadDefaultOpenAIResponseHeaderTimeoutUnlimited(t *testing.T) {
+func TestLoadDefaultOpenAIResponseHeaderTimeout(t *testing.T) {
 	resetViperWithJWTSecret(t)
 
 	cfg, err := Load()
 	require.NoError(t, err)
-	require.Equal(t, 0, cfg.Gateway.OpenAIResponseHeaderTimeout)
+	require.Equal(t, 600, cfg.Gateway.OpenAIResponseHeaderTimeout)
 }
 
 func TestLoadOpenAIResponseHeaderTimeoutFromEnv(t *testing.T) {

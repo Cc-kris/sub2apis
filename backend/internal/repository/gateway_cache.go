@@ -41,6 +41,24 @@ func (c *gatewayCache) SetSessionAccountID(ctx context.Context, groupID int64, s
 	return c.rdb.Set(ctx, key, accountID, ttl).Err()
 }
 
+// ClaimSessionAccountID atomically establishes a sticky-session binding.
+// When another concurrent request already owns the binding, it returns that
+// account instead of overwriting it.
+func (c *gatewayCache) ClaimSessionAccountID(ctx context.Context, groupID int64, sessionHash string, accountID int64, ttl time.Duration) (boundAccountID int64, claimed bool, err error) {
+	key := buildSessionKey(groupID, sessionHash)
+	for attempt := 0; attempt < 2; attempt++ {
+		claimed, err = c.rdb.SetNX(ctx, key, accountID, ttl).Result()
+		if err != nil || claimed {
+			return accountID, claimed, err
+		}
+		boundAccountID, err = c.rdb.Get(ctx, key).Int64()
+		if !errors.Is(err, redis.Nil) {
+			return boundAccountID, false, err
+		}
+	}
+	return 0, false, redis.Nil
+}
+
 func (c *gatewayCache) RefreshSessionTTL(ctx context.Context, groupID int64, sessionHash string, ttl time.Duration) error {
 	key := buildSessionKey(groupID, sessionHash)
 	return c.rdb.Expire(ctx, key, ttl).Err()

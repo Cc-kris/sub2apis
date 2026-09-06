@@ -16,15 +16,48 @@ import (
 
 type usageRepoStub struct {
 	UsageLogRepository
-	stats      *usagestats.DashboardStats
-	rangeStats *usagestats.DashboardStats
-	err        error
-	rangeErr   error
-	calls      int32
-	rangeCalls int32
-	rangeStart time.Time
-	rangeEnd   time.Time
-	onCall     chan struct{}
+	stats        *usagestats.DashboardStats
+	rangeStats   *usagestats.DashboardStats
+	err          error
+	rangeErr     error
+	calls        int32
+	rangeCalls   int32
+	rangeStart   time.Time
+	rangeEnd     time.Time
+	onCall       chan struct{}
+	groupSummary []usagestats.GroupUsageSummary
+	groupCalls   int
+}
+
+func (s *usageRepoStub) GetAllGroupUsageSummary(_ context.Context, _ time.Time) ([]usagestats.GroupUsageSummary, error) {
+	s.groupCalls++
+	return s.groupSummary, nil
+}
+
+type groupUsageSummaryProviderStub struct {
+	results []usagestats.GroupUsageSummary
+	calls   int
+}
+
+func (s *groupUsageSummaryProviderStub) GetGroupUsageSummary(context.Context, time.Time) ([]usagestats.GroupUsageSummary, error) {
+	s.calls++
+	return s.results, nil
+}
+
+func TestDashboardGroupUsageSummaryUsesRealtimeWhenRollupDisabled(t *testing.T) {
+	usageRepo := &usageRepoStub{groupSummary: []usagestats.GroupUsageSummary{{GroupID: 1}}}
+	provider := &groupUsageSummaryProviderStub{results: []usagestats.GroupUsageSummary{{GroupID: 1, GroupUsageSource: "rollup"}}}
+	settings := NewSettingService(&compactTestSettingRepo{values: map[string]string{
+		SettingKeyGroupUsageRollupEnabled: "false",
+	}}, &config.Config{})
+	dashboard := NewDashboardService(usageRepo, nil, nil, &config.Config{}, provider)
+	dashboard.SetSettingService(settings)
+
+	results, err := dashboard.GetGroupUsageSummary(context.Background(), time.Now())
+	require.NoError(t, err)
+	require.Equal(t, 0, provider.calls)
+	require.Equal(t, 1, usageRepo.groupCalls)
+	require.Equal(t, "realtime", results[0].GroupUsageSource)
 }
 
 func (s *usageRepoStub) GetDashboardStats(ctx context.Context) (*usagestats.DashboardStats, error) {

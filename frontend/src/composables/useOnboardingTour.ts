@@ -161,6 +161,14 @@ export function useOnboardingTour(options: OnboardingOptions) {
 
       // 渲染时重组 Footer 布局
       onPopoverRender: (popover, { config, state }) => {
+        // Driver.js uses a hidden placeholder for overview steps without a
+        // concrete target. The library still puts dialog ARIA state on that
+        // placeholder, although it is not an interactive control. Keep the
+        // implementation detail out of the accessibility tree.
+        requestAnimationFrame(() => {
+          document.getElementById('driver-dummy-element')?.setAttribute('aria-hidden', 'true')
+        })
+
         // Class name constants for easier maintenance
         const CLASS_REORGANIZED = 'reorganized'
         const CLASS_FOOTER_LEFT = 'footer-left'

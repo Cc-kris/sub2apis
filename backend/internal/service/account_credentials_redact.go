@@ -1,5 +1,7 @@
 package service
 
+import "strings"
+
 // SensitiveCredentialKeys 列出 Account.Credentials JSON map 中绝不允许返回到前端的子键。
 // dto 层做响应脱敏、service 层做更新合并都引用此清单——新增凭证类型时务必同步。
 var SensitiveCredentialKeys = []string{
@@ -23,6 +25,28 @@ var sensitiveCredentialKeySet = func() map[string]struct{} {
 // IsSensitiveCredentialKey 判断指定键是否为敏感凭证子键。
 func IsSensitiveCredentialKey(key string) bool {
 	_, ok := sensitiveCredentialKeySet[key]
+	return ok
+}
+
+// SensitiveAccountExtraKeys 列出账号 extra 中可能携带凭据原文的字段。
+// extra 同时承载额度/状态等可展示元数据，因此只拦截明确的凭据字段，
+// 不使用模糊的 token/key 子串匹配，避免误删 session_token_present、access_token_sha256 等安全元数据。
+var SensitiveAccountExtraKeys = []string{
+	"private_token", "client_secret", "api_token", "access_token", "refresh_token",
+	"id_token", "secret", "password", "cookie", "authorization",
+}
+
+var sensitiveAccountExtraKeySet = func() map[string]struct{} {
+	m := make(map[string]struct{}, len(SensitiveAccountExtraKeys))
+	for _, k := range SensitiveAccountExtraKeys {
+		m[k] = struct{}{}
+	}
+	return m
+}()
+
+// IsSensitiveAccountExtraKey 判断账号 extra 字段是否为明确的凭据字段。
+func IsSensitiveAccountExtraKey(key string) bool {
+	_, ok := sensitiveAccountExtraKeySet[strings.ToLower(strings.TrimSpace(key))]
 	return ok
 }
 

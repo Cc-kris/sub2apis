@@ -1469,13 +1469,18 @@ const openBulkEditSelected = () => {
 const openBulkEditFiltered = async () => {
   const filters = buildBulkEditFilterSnapshot()
   const preview = await adminAPI.accounts.list(1, 100, filters)
-  const { selectedPlatforms, selectedTypes } = collectSelectionMetadata(preview.items)
+	// The server applies the filters to every matching account, while this
+	// preview is deliberately bounded. When it is incomplete, platform/type
+	// specific controls must stay hidden rather than trusting a partial page.
+	const metadata = preview.total > preview.items.length
+	  ? { selectedPlatforms: [] as AccountPlatform[], selectedTypes: [] as AccountType[] }
+	  : collectSelectionMetadata(preview.items)
   bulkEditTarget.value = {
     mode: 'filtered',
     filters,
     previewCount: preview.total,
-    selectedPlatforms,
-    selectedTypes
+		selectedPlatforms: metadata.selectedPlatforms,
+		selectedTypes: metadata.selectedTypes
   }
   showBulkEdit.value = true
 }

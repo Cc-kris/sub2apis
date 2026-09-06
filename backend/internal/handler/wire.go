@@ -59,8 +59,6 @@ func ProvideAdminHandlers(
 	contentModerationHandler *admin.ContentModerationHandler,
 	paymentHandler *admin.PaymentHandler,
 	affiliateHandler *admin.AffiliateHandler,
-	cacheConfigHandler *admin.CacheConfigHandler,
-	cacheStatsHandler *admin.CacheStatsHandler,
 	upstreamHandler *admin.UpstreamHandler,
 	upstreamWalletHandler *admin.UpstreamWalletHandler,
 	upstreamFinanceProtocolHandler *admin.UpstreamFinanceProtocolHandler,
@@ -98,8 +96,6 @@ func ProvideAdminHandlers(
 		ContentModeration:       contentModerationHandler,
 		Payment:                 paymentHandler,
 		Affiliate:               affiliateHandler,
-		CacheConfig:             cacheConfigHandler,
-		CacheStats:              cacheStatsHandler,
 		Upstream:                upstreamHandler,
 		UpstreamWallet:          upstreamWalletHandler,
 		UpstreamFinanceProtocol: upstreamFinanceProtocolHandler,
@@ -139,10 +135,6 @@ func ProvideOpenAIGatewayHandler(
 	h := NewOpenAIGatewayHandler(gatewayService, concurrencyService, billingCacheService, apiKeyService, usageRecordWorkerPool, errorPassthroughService, contentModerationService, cfg)
 	h.SetGrokMediaEligibilityProber(grokQuotaService)
 	return h
-}
-
-func ProvideCacheConfigHandler(settingService *service.SettingService, gatewayService *service.OpenAIGatewayService) *admin.CacheConfigHandler {
-	return admin.NewCacheConfigHandler(settingService, gatewayService)
 }
 
 // ProvideHandlers creates the Handlers struct
@@ -247,8 +239,6 @@ var ProviderSet = wire.NewSet(
 	admin.NewContentModerationHandler,
 	admin.NewPaymentHandler,
 	admin.NewAffiliateHandler,
-	ProvideCacheConfigHandler,
-	admin.NewCacheStatsHandler,
 	admin.NewUpstreamHandler,
 	admin.NewUpstreamWalletHandler,
 	admin.NewUpstreamFinanceProtocolHandler,

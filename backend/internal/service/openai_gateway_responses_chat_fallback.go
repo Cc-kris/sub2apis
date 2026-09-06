@@ -71,6 +71,16 @@ func (s *OpenAIGatewayService) forwardResponsesViaRawChatCompletions(
 		})
 		return nil, fmt.Errorf("missing model in request")
 	}
+	if strings.TrimSpace(responsesReq.PreviousResponseID) != "" {
+		const message = "previous_response_id is not supported by this Chat Completions compatibility route; send the complete conversation in input"
+		c.JSON(http.StatusBadRequest, gin.H{
+			"error": gin.H{
+				"type":    "invalid_request_error",
+				"message": message,
+			},
+		})
+		return nil, errors.New(message)
+	}
 
 	clientStream := responsesReq.Stream
 	reasoningEffort := extractOpenAIReasoningEffortFromBody(body, originalModel)
@@ -122,7 +132,7 @@ func (s *OpenAIGatewayService) forwardResponsesViaRawChatCompletions(
 	if apiKey == "" {
 		return nil, fmt.Errorf("account %d missing api_key", account.ID)
 	}
-	baseURL := account.GetOpenAIBaseURL()
+	baseURL := account.GetOpenAIBaseURLForProtocol(OpenAIAPIProtocolChat)
 	if baseURL == "" {
 		baseURL = "https://api.openai.com"
 	}
@@ -157,6 +167,7 @@ func (s *OpenAIGatewayService) forwardResponsesViaRawChatCompletions(
 	if customUA := account.GetOpenAIUserAgent(); customUA != "" {
 		upstreamReq.Header.Set("user-agent", customUA)
 	}
+	resolveOpenAIAgentIdentity(account).ApplyTo(upstreamReq.Header, nil)
 
 	proxyURL := ""
 	if account.Proxy != nil {
@@ -322,11 +333,14 @@ func (s *OpenAIGatewayService) streamChatCompletionsAsResponses(
 	clientDisconnected := false
 	sawDone := false
 
-	writeEvents := func(events []apicompat.ResponsesStreamEvent) {
+	writeEvents := func(events []apicompat.ResponsesStreamEvent) error {
 		if clientDisconnected || len(events) == 0 {
-			return
+			return nil
 		}
-		writeStreamHeaders()
+		// Convert the complete batch before committing HTTP 200. A malformed
+		// first event must remain a gateway error rather than becoming a
+		// successful SSE response with an incomplete stream.
+		encoded := make([]string, 0, len(events))
 		for _, event := range events {
 			sse, err := apicompat.ResponsesEventToSSE(event)
 			if err != nil {
@@ -334,18 +348,23 @@ func (s *OpenAIGatewayService) streamChatCompletionsAsResponses(
 					zap.Error(err),
 					zap.String("request_id", requestID),
 				)
-				continue
+				return fmt.Errorf("marshal responses stream event: %w", err)
 			}
+			encoded = append(encoded, sse)
+		}
+		writeStreamHeaders()
+		for _, sse := range encoded {
 			if _, err := fmt.Fprint(c.Writer, sse); err != nil {
 				clientDisconnected = true
 				logger.L().Debug("openai responses chat fallback: client disconnected, continuing to drain upstream for billing",
 					zap.Error(err),
 					zap.String("request_id", requestID),
 				)
-				return
+				return err
 			}
 		}
 		c.Writer.Flush()
+		return nil
 	}
 
 	scanner := bufio.NewScanner(resp.Body)
@@ -380,13 +399,26 @@ func (s *OpenAIGatewayService) streamChatCompletionsAsResponses(
 				zap.Error(err),
 				zap.String("request_id", requestID),
 			)
-			continue
+			return &OpenAIForwardResult{
+				RequestID:       requestID,
+				Usage:           usage,
+				Model:           originalModel,
+				BillingModel:    billingModel,
+				UpstreamModel:   upstreamModel,
+				ReasoningEffort: reasoningEffort,
+				ServiceTier:     serviceTier,
+				Stream:          true,
+				Duration:        time.Since(startTime),
+				FirstTokenMs:    firstTokenMs,
+			}, fmt.Errorf("parse chat completions stream event: %w", err)
 		}
 		if firstTokenMs == nil && !isOpenAIChatUsageOnlyStreamChunk(payload) && chatChunkStartsResponsesOutput(&chunk) {
 			ms := int(time.Since(startTime).Milliseconds())
 			firstTokenMs = &ms
 		}
-		writeEvents(apicompat.ChatCompletionsChunkToResponsesEvents(&chunk, state))
+		if err := writeEvents(apicompat.ChatCompletionsChunkToResponsesEvents(&chunk, state)); err != nil {
+			return &OpenAIForwardResult{RequestID: requestID, Usage: usage, Model: originalModel, BillingModel: billingModel, UpstreamModel: upstreamModel, Stream: true, Duration: time.Since(startTime), FirstTokenMs: firstTokenMs}, err
+		}
 	}
 
 	if err := scanner.Err(); err != nil {
@@ -410,7 +442,9 @@ func (s *OpenAIGatewayService) streamChatCompletionsAsResponses(
 		}, fmt.Errorf("stream usage incomplete: %w", err)
 	}
 
-	writeEvents(apicompat.FinalizeChatCompletionsResponsesStream(state))
+	if err := writeEvents(apicompat.FinalizeChatCompletionsResponsesStream(state)); err != nil {
+		return &OpenAIForwardResult{RequestID: requestID, Usage: usage, Model: originalModel, BillingModel: billingModel, UpstreamModel: upstreamModel, Stream: true, Duration: time.Since(startTime), FirstTokenMs: firstTokenMs}, err
+	}
 	if !clientDisconnected {
 		writeStreamHeaders()
 		if _, err := fmt.Fprint(c.Writer, "data: [DONE]\n\n"); err != nil {

@@ -222,7 +222,10 @@ type CreateGroupInput struct {
 	RequirePrivacySet           bool
 	MessagesDispatchModelConfig OpenAIMessagesDispatchModelConfig
 	// RPMLimit 分组 RPM 上限（0 = 不限制）
-	RPMLimit int
+	RPMLimit                   int
+	LongContextPricingEnabled  bool
+	LongContextPricingProvided bool
+	ModelPricing               map[string]GroupModelPricing
 	// 从指定分组复制账号（创建分组后在同一事务内绑定）
 	CopyAccountsFromGroupIDs []int64
 }
@@ -267,7 +270,9 @@ type UpdateGroupInput struct {
 	RequirePrivacySet           *bool
 	MessagesDispatchModelConfig *OpenAIMessagesDispatchModelConfig
 	// RPMLimit 分组 RPM 上限（0 = 不限制），nil 表示未提供不改动。
-	RPMLimit *int
+	RPMLimit                  *int
+	LongContextPricingEnabled *bool
+	ModelPricing              map[string]GroupModelPricing
 	// 从指定分组复制账号（同步操作：先清空当前分组的账号绑定，再绑定源分组的账号）
 	CopyAccountsFromGroupIDs []int64
 }
@@ -346,6 +351,19 @@ func dropDeprecatedUpstreamWarningExtra(extra map[string]any) {
 	}
 	delete(extra, "upstream_warning_amount")
 	delete(extra, "upstream_notify_enabled")
+}
+
+func platformSpecificBulkUpdateFieldsPresent(credentials, extra map[string]any) bool {
+	for _, key := range []string{
+		"openai_compact_mode", "openai_oauth_responses_websockets_v2_mode", "openai_oauth_responses_websockets_v2_enabled",
+		"openai_apikey_responses_websockets_v2_mode", "openai_apikey_responses_websockets_v2_enabled", "codex_identity_mode", "structured_output_mode",
+	} {
+		if _, ok := extra[key]; ok {
+			return true
+		}
+	}
+	_, ok := credentials["compact_model_mapping"]
+	return ok
 }
 
 type BulkUpdateAccountFilters struct {
@@ -1702,6 +1720,14 @@ func cloneAdminAuthIdentityMetadata(input map[string]any) map[string]any {
 }
 
 // Group management implementations
+func createGroupHasSalesPricingMutation(input *CreateGroupInput) bool {
+	return input != nil && (input.RateMultiplier != 1 || input.ImageRateIndependent || input.ImageRateMultiplier != nil || input.ImagePrice1K != nil || input.ImagePrice2K != nil || input.ImagePrice4K != nil || input.VideoRateIndependent || input.VideoRateMultiplier != nil || input.VideoPrice480P != nil || input.VideoPrice720P != nil || input.VideoPrice1080P != nil || input.LongContextPricingProvided || len(input.ModelPricing) > 0)
+}
+
+func updateGroupHasSalesPricingMutation(input *UpdateGroupInput) bool {
+	return input != nil && (input.RateMultiplier != nil || input.ImageRateIndependent != nil || input.ImageRateMultiplier != nil || input.ImagePrice1K != nil || input.ImagePrice2K != nil || input.ImagePrice4K != nil || input.VideoRateIndependent != nil || input.VideoRateMultiplier != nil || input.VideoPrice480P != nil || input.VideoPrice720P != nil || input.VideoPrice1080P != nil || input.LongContextPricingEnabled != nil || input.ModelPricing != nil)
+}
+
 func (s *adminServiceImpl) ListGroups(ctx context.Context, page, pageSize int, platform, status, search string, isExclusive *bool, sortBy, sortOrder string) ([]Group, int64, error) {
 	params := pagination.PaginationParams{Page: page, PageSize: pageSize, SortBy: sortBy, SortOrder: sortOrder}
 	groups, result, err := s.groupRepo.ListWithFilters(ctx, params, platform, status, search, isExclusive)
@@ -1724,6 +1750,12 @@ func (s *adminServiceImpl) GetGroup(ctx context.Context, id int64) (*Group, erro
 }
 
 func (s *adminServiceImpl) CreateGroup(ctx context.Context, input *CreateGroupInput) (*Group, error) {
+	if createGroupHasSalesPricingMutation(input) && s.settingService != nil && !s.settingService.IsSalesPricingResolverEnabled(ctx) {
+		return nil, ErrSalesPricingResolverDisabled
+	}
+	if err := ValidateModelPricing(input.ModelPricing); err != nil {
+		return nil, err
+	}
 	if input.RateMultiplier <= 0 {
 		return nil, errors.New("rate_multiplier must be > 0")
 	}
@@ -1854,6 +1886,8 @@ func (s *adminServiceImpl) CreateGroup(ctx context.Context, input *CreateGroupIn
 		DefaultMappedModel:              input.DefaultMappedModel,
 		MessagesDispatchModelConfig:     normalizeOpenAIMessagesDispatchModelConfig(input.MessagesDispatchModelConfig),
 		RPMLimit:                        input.RPMLimit,
+		LongContextPricingEnabled:       input.LongContextPricingEnabled,
+		ModelPricing:                    input.ModelPricing,
 	}
 	sanitizeGroupMessagesDispatchFields(group)
 	if err := s.groupRepo.Create(ctx, group); err != nil {
@@ -1978,6 +2012,14 @@ func (s *adminServiceImpl) validateFallbackGroupOnInvalidRequest(ctx context.Con
 }
 
 func (s *adminServiceImpl) UpdateGroup(ctx context.Context, id int64, input *UpdateGroupInput) (*Group, error) {
+	if updateGroupHasSalesPricingMutation(input) && s.settingService != nil && !s.settingService.IsSalesPricingResolverEnabled(ctx) {
+		return nil, ErrSalesPricingResolverDisabled
+	}
+	if input.ModelPricing != nil {
+		if err := ValidateModelPricing(input.ModelPricing); err != nil {
+			return nil, err
+		}
+	}
 	group, err := s.groupRepo.GetByID(ctx, id)
 	if err != nil {
 		return nil, err
@@ -2121,6 +2163,12 @@ func (s *adminServiceImpl) UpdateGroup(ctx context.Context, id int64, input *Upd
 	if input.RPMLimit != nil {
 		group.RPMLimit = *input.RPMLimit
 	}
+	if input.LongContextPricingEnabled != nil {
+		group.LongContextPricingEnabled = *input.LongContextPricingEnabled
+	}
+	if input.ModelPricing != nil {
+		group.ModelPricing = input.ModelPricing
+	}
 	sanitizeGroupMessagesDispatchFields(group)
 
 	if err := s.groupRepo.Update(ctx, group); err != nil {
@@ -2203,6 +2251,9 @@ func (s *adminServiceImpl) UpdateGroup(ctx context.Context, id int64, input *Upd
 }
 
 func (s *adminServiceImpl) DeleteGroup(ctx context.Context, id int64) error {
+	if s.settingService != nil && !s.settingService.IsSalesPricingResolverEnabled(ctx) {
+		return ErrSalesPricingResolverDisabled
+	}
 	var groupKeys []string
 	if s.authCacheInvalidator != nil {
 		keys, err := s.apiKeyRepo.ListKeysByGroupID(ctx, id)
@@ -2256,6 +2307,9 @@ func (s *adminServiceImpl) GetGroupRateMultipliers(ctx context.Context, groupID 
 }
 
 func (s *adminServiceImpl) ClearGroupRateMultipliers(ctx context.Context, groupID int64) error {
+	if s.settingService != nil && !s.settingService.IsSalesPricingResolverEnabled(ctx) {
+		return ErrSalesPricingResolverDisabled
+	}
 	if s.userGroupRateRepo == nil {
 		return nil
 	}
@@ -2263,6 +2317,9 @@ func (s *adminServiceImpl) ClearGroupRateMultipliers(ctx context.Context, groupI
 }
 
 func (s *adminServiceImpl) BatchSetGroupRateMultipliers(ctx context.Context, groupID int64, entries []GroupRateMultiplierInput) error {
+	if s.settingService != nil && !s.settingService.IsSalesPricingResolverEnabled(ctx) {
+		return ErrSalesPricingResolverDisabled
+	}
 	if s.userGroupRateRepo == nil {
 		return nil
 	}
@@ -2929,33 +2986,22 @@ func (s *adminServiceImpl) BulkUpdateAccounts(ctx context.Context, input *BulkUp
 
 	needMixedChannelCheck := input.GroupIDs != nil && !input.SkipMixedChannelCheck
 
-	// 预加载账号平台信息（混合渠道检查需要）。
-	platformByID := map[int64]string{}
-	if needMixedChannelCheck {
+	// 预加载账号平台/类型快照。原子 repository 会在同一事务内重新
+	// FOR UPDATE 校验该快照，读取结果不是写入依据，只用于风险提示和
+	// 并发变更检测。
+	var expectedTargets []AccountBulkUpdateTarget
+	if input.GroupIDs != nil || platformSpecificBulkUpdateFieldsPresent(input.Credentials, input.Extra) {
 		accounts, err := s.accountRepo.GetByIDs(ctx, input.AccountIDs)
 		if err != nil {
 			return nil, err
 		}
+		expectedTargets = make([]AccountBulkUpdateTarget, 0, len(accounts))
 		for _, account := range accounts {
 			if account != nil {
-				platformByID[account.ID] = account.Platform
+				expectedTargets = append(expectedTargets, AccountBulkUpdateTarget{ID: account.ID, Platform: account.Platform, Type: account.Type})
 			}
 		}
 	}
-
-	// 预检查混合渠道风险：在任何写操作之前，若发现风险立即返回错误。
-	if needMixedChannelCheck {
-		for _, accountID := range input.AccountIDs {
-			platform := platformByID[accountID]
-			if platform == "" {
-				continue
-			}
-			if err := s.checkMixedChannelRisk(ctx, accountID, platform, *input.GroupIDs); err != nil {
-				return nil, err
-			}
-		}
-	}
-
 	if input.RateMultiplier != nil {
 		if *input.RateMultiplier < 0 {
 			return nil, errors.New("rate_multiplier must be >= 0")
@@ -2999,32 +3045,24 @@ func (s *adminServiceImpl) BulkUpdateAccounts(ctx context.Context, input *BulkUp
 		repoUpdates.Schedulable = input.Schedulable
 	}
 
-	// Run bulk update for column/jsonb fields first.
-	if _, err := s.accountRepo.BulkUpdate(ctx, input.AccountIDs, repoUpdates); err != nil {
+	var groupIDs []int64
+	if input.GroupIDs != nil {
+		groupIDs = append([]int64(nil), (*input.GroupIDs)...)
+	}
+	atomicRepo, ok := s.accountRepo.(interface {
+		BulkUpdateWithGroupsValidated(context.Context, []int64, AccountBulkUpdate, []int64, []AccountBulkUpdateTarget, bool) ([]int64, error)
+	})
+	if !ok {
+		return nil, errors.New("bulk update atomic repository capability is required")
+	}
+	updatedIDs, err := atomicRepo.BulkUpdateWithGroupsValidated(ctx, input.AccountIDs, repoUpdates, groupIDs, expectedTargets, needMixedChannelCheck)
+	if err != nil {
 		return nil, err
 	}
-
-	// Handle group bindings per account (requires individual operations).
-	for _, accountID := range input.AccountIDs {
-		entry := BulkUpdateAccountResult{AccountID: accountID}
-
-		if input.GroupIDs != nil {
-			if err := s.accountRepo.BindGroups(ctx, accountID, *input.GroupIDs); err != nil {
-				entry.Success = false
-				entry.Status = "failed"
-				entry.Error = err.Error()
-				result.Failed++
-				result.FailedIDs = append(result.FailedIDs, accountID)
-				result.Results = append(result.Results, entry)
-				continue
-			}
-		}
-
-		entry.Success = true
-		entry.Status = "success"
+	for _, accountID := range updatedIDs {
 		result.Success++
 		result.SuccessIDs = append(result.SuccessIDs, accountID)
-		result.Results = append(result.Results, entry)
+		result.Results = append(result.Results, BulkUpdateAccountResult{AccountID: accountID, Success: true, Status: "success"})
 	}
 
 	return result, nil

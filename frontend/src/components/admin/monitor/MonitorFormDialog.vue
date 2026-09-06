@@ -48,6 +48,36 @@
         </div>
       </div>
 
+      <div class="rounded-lg border border-gray-200 bg-gray-50/50 p-3 dark:border-dark-700 dark:bg-dark-900/30">
+        <label class="input-label">{{ t('admin.channelMonitor.form.mode') }}</label>
+        <div class="grid gap-3 sm:grid-cols-3">
+          <button
+            v-for="opt in availableMonitorModeOptions"
+            :key="opt.value"
+            type="button"
+            :aria-pressed="form.mode === opt.value"
+            class="rounded-lg border-2 px-3 py-2 text-left transition-colors"
+            :class="monitorModeButtonClass(opt.value)"
+            @click="form.mode = opt.value"
+          >
+            <span class="block text-sm font-semibold">{{ opt.label }}</span>
+            <span class="mt-0.5 block text-xs opacity-80">{{ opt.hint }}</span>
+          </button>
+        </div>
+      </div>
+
+      <div>
+        <label class="input-label">{{ t('admin.channelMonitor.form.accountId') }}</label>
+        <input v-model.number="form.account_id" type="number" min="1" class="input" :placeholder="t('admin.channelMonitor.form.accountIdPlaceholder')" />
+        <input v-model="accountSearch" type="search" class="input mt-2" :placeholder="t('admin.channelMonitor.form.accountSearchPlaceholder')" />
+        <div v-if="accountOptions.length" class="mt-1 max-h-32 overflow-auto rounded border border-gray-200 dark:border-dark-700">
+          <button v-for="account in accountOptions" :key="account.id" type="button" class="block w-full px-2 py-1 text-left text-xs hover:bg-gray-100 dark:hover:bg-dark-700" @click="form.account_id = account.id">
+            {{ account.name }} · {{ account.platform }} · #{{ account.id }}
+          </button>
+        </div>
+        <p class="mt-1 text-xs text-gray-400">{{ t('admin.channelMonitor.form.accountIdHint') }}</p>
+      </div>
+
       <div>
         <label class="input-label">{{ t('admin.channelMonitor.form.endpoint') }} <span class="text-red-500">*</span></label>
         <div class="flex gap-2">
@@ -191,9 +221,11 @@ import type {
   ChannelMonitor,
   CreateParams,
   APIMode,
+  MonitorMode,
   Provider,
   UpdateParams,
 } from '@/api/admin/channelMonitor'
+import { searchChannelMonitorAccounts } from '@/api/admin/channelMonitor'
 import type { ChannelMonitorTemplate } from '@/api/admin/channelMonitorTemplate'
 import type { ApiKey } from '@/types'
 import BaseDialog from '@/components/common/BaseDialog.vue'
@@ -210,6 +242,10 @@ import {
   PROVIDER_ANTHROPIC,
   PROVIDER_GEMINI,
   PROVIDER_GROK,
+  PROVIDER_ANTIGRAVITY,
+  PROVIDER_KIMI,
+  PROVIDER_ZHIPU,
+  PROVIDER_DEEPSEEK,
   DEFAULT_GROK_ENDPOINT,
   DEFAULT_GROK_MODEL,
   API_MODE_CHAT_COMPLETIONS,
@@ -242,6 +278,9 @@ const systemDefaultInterval = computed<number>(() => {
 const editing = computed<ChannelMonitor | null>(() => props.monitor)
 
 const submitting = ref(false)
+const accountSearch = ref('')
+const accountOptions = ref<Array<{ id: number; name: string; platform: string; status: string }>>([])
+let accountSearchTimer: ReturnType<typeof setTimeout> | undefined
 
 // API key picker
 const showKeyPicker = ref(false)
@@ -252,6 +291,8 @@ const userGroupRates = ref<Record<number, number>>({})
 interface MonitorForm {
   name: string
   provider: Provider
+  mode: MonitorMode
+  account_id: number | null
   api_mode: APIMode
   endpoint: string
   api_key: string
@@ -270,6 +311,8 @@ interface MonitorForm {
 const form = reactive<MonitorForm>({
   name: '',
   provider: PROVIDER_ANTHROPIC,
+  mode: 'active',
+  account_id: null,
   api_mode: API_MODE_CHAT_COMPLETIONS,
   endpoint: '',
   api_key: '',
@@ -282,6 +325,17 @@ const form = reactive<MonitorForm>({
   extra_headers: {},
   body_override_mode: 'off',
   body_override: null,
+})
+
+watch([accountSearch, () => form.provider], ([search, provider]) => {
+  if (accountSearchTimer) clearTimeout(accountSearchTimer)
+  accountSearchTimer = setTimeout(async () => {
+    if (!String(search).trim()) { accountOptions.value = []; return }
+    try {
+      const result = await searchChannelMonitorAccounts({ provider, search: String(search).trim(), page: 1, page_size: 20 })
+      accountOptions.value = result.items || []
+    } catch { accountOptions.value = [] }
+  }, 300)
 })
 
 let suppressFormWatchers = false
@@ -354,6 +408,29 @@ const apiModeOptions = computed<{ value: APIMode; label: string; hint: string }[
   },
 ])
 
+const monitorModeOptions = computed<{ value: MonitorMode; label: string; hint: string }[]>(() => [
+  {
+    value: 'active',
+    label: t('admin.channelMonitor.form.modeActive'),
+    hint: t('admin.channelMonitor.form.modeActiveHint'),
+  },
+  {
+    value: 'passive',
+    label: t('admin.channelMonitor.form.modePassive'),
+    hint: t('admin.channelMonitor.form.modePassiveHint'),
+  },
+  {
+    value: 'quota',
+    label: t('admin.channelMonitor.form.modeQuota'),
+    hint: t('admin.channelMonitor.form.modeQuotaHint'),
+  },
+])
+
+const availableMonitorModeOptions = computed(() => form.provider === PROVIDER_ANTIGRAVITY
+  ? monitorModeOptions.value.filter((option) => option.value === 'quota')
+  : monitorModeOptions.value,
+)
+
 function normalizeAPIMode(mode: APIMode | undefined | null): APIMode {
   return mode === API_MODE_RESPONSES ? API_MODE_RESPONSES : API_MODE_CHAT_COMPLETIONS
 }
@@ -364,6 +441,14 @@ function apiModeButtonClass(mode: APIMode): string {
     return 'border-primary-500 bg-white text-primary-700 shadow-sm dark:border-primary-400 dark:bg-primary-500/15 dark:text-primary-300'
   }
   return 'border-blue-100 bg-white/70 text-gray-600 hover:border-primary-300 dark:border-dark-700 dark:bg-dark-800 dark:text-gray-400'
+}
+
+function monitorModeButtonClass(mode: MonitorMode): string {
+  const active = form.mode === mode
+  if (active) {
+    return 'border-primary-500 bg-white text-primary-700 shadow-sm dark:border-primary-400 dark:bg-primary-500/15 dark:text-primary-300'
+  }
+  return 'border-gray-200 bg-white/70 text-gray-600 hover:border-primary-300 dark:border-dark-700 dark:bg-dark-800 dark:text-gray-400'
 }
 
 function templateOptionLabel(tpl: ChannelMonitorTemplate): string {
@@ -391,6 +476,10 @@ const providerOptions = computed<ProviderOption[]>(() => [
   { value: PROVIDER_OPENAI, label: t('monitorCommon.providers.openai') },
   { value: PROVIDER_GEMINI, label: t('monitorCommon.providers.gemini') },
   { value: PROVIDER_GROK, label: t('monitorCommon.providers.grok') },
+  { value: PROVIDER_ANTIGRAVITY, label: t('monitorCommon.providers.antigravity') },
+  { value: PROVIDER_KIMI, label: t('monitorCommon.providers.kimi') },
+  { value: PROVIDER_ZHIPU, label: t('monitorCommon.providers.zhipu') },
+  { value: PROVIDER_DEEPSEEK, label: t('monitorCommon.providers.deepseek') },
 ])
 
 function selectProvider(provider: Provider) {
@@ -399,6 +488,9 @@ function selectProvider(provider: Provider) {
   const clearGrokEndpoint = previousProvider === PROVIDER_GROK && form.endpoint === DEFAULT_GROK_ENDPOINT
   const clearGrokModel = previousProvider === PROVIDER_GROK && form.primary_model === DEFAULT_GROK_MODEL
   form.provider = provider
+  if (provider === PROVIDER_ANTIGRAVITY) {
+    form.mode = 'quota'
+  }
   if (provider === PROVIDER_GROK) {
     if (!form.endpoint.trim()) form.endpoint = DEFAULT_GROK_ENDPOINT
     if (!form.primary_model.trim()) form.primary_model = DEFAULT_GROK_MODEL
@@ -433,6 +525,8 @@ function resetForm() {
   suppressFormWatchers = true
   form.name = ''
   form.provider = PROVIDER_ANTHROPIC
+  form.mode = 'active'
+  form.account_id = null
   form.api_mode = API_MODE_CHAT_COMPLETIONS
   form.endpoint = ''
   form.api_key = ''
@@ -452,6 +546,8 @@ function loadFromMonitor(m: ChannelMonitor) {
   suppressFormWatchers = true
   form.name = m.name
   form.provider = m.provider
+  form.mode = m.mode || 'active'
+  form.account_id = m.account_id ?? null
   form.api_mode = normalizeAPIMode(m.api_mode)
   form.endpoint = m.endpoint
   form.api_key = ''
@@ -517,6 +613,8 @@ function buildPayload(): CreateParams {
   return {
     name: form.name.trim(),
     provider: form.provider,
+    mode: form.mode,
+    account_id: form.account_id,
     api_mode: form.provider === PROVIDER_OPENAI ? form.api_mode : API_MODE_CHAT_COMPLETIONS,
     endpoint: form.endpoint.trim(),
     api_key: form.api_key.trim(),

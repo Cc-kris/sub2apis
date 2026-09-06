@@ -38,6 +38,9 @@ type SalesPricingContext struct {
 	Multiplier     decimal.Decimal     `json:"-"`
 	Prices         *ModelPriceView     `json:"prices"`
 	Shadow         *SalesPricingShadow `json:"shadow,omitempty"`
+	RuleLayer      string              `json:"rule_layer,omitempty"`
+	TimeMultiplier decimal.Decimal     `json:"-"`
+	ServiceTier    string              `json:"service_tier,omitempty"`
 }
 
 type SalesPricingShadow struct {
@@ -82,6 +85,7 @@ type SalesPricingSnapshot struct {
 	BillingMode    string                     `json:"billing_mode"`
 	ServiceTier    string                     `json:"service_tier,omitempty"`
 	BillingTier    string                     `json:"billing_tier,omitempty"`
+	Rule           map[string]string          `json:"rule,omitempty"`
 	Prices         *ModelPriceView            `json:"prices"`
 	Usage          SalesPricingUsageSnapshot  `json:"usage"`
 	Amounts        SalesPricingAmountSnapshot `json:"amounts"`
@@ -104,6 +108,9 @@ func BuildV2SalesPricingContext(requestedModel, checksum string, resolved *Resol
 		Checksum:       strings.TrimSpace(checksum),
 		Multiplier:     multiplier,
 		Prices:         prices,
+		RuleLayer:      resolved.RuleLayer,
+		TimeMultiplier: decimal.NewFromFloat(maxFloat(resolved.TimeMultiplier, 1)),
+		ServiceTier:    resolved.ServiceTier,
 	}
 	if ctx.Checksum == "" {
 		ctx.Checksum = salesPricingChecksum(ctx.EffectiveModel, ctx.PricingSource, ctx.Prices)
@@ -111,19 +118,32 @@ func BuildV2SalesPricingContext(requestedModel, checksum string, resolved *Resol
 	return ctx, nil
 }
 
+func maxFloat(v, fallback float64) float64 {
+	if v <= 0 {
+		return fallback
+	}
+	return v
+}
+
 func ResolveUnifiedSalesPricing(ctx context.Context, resolver *ModelPricingResolver, channels *ChannelService, groupID *int64, requestedModel string) (*ResolvedPricing, error) {
+	return resolveUnifiedSalesPricing(ctx, resolver, channels, groupID, PricingInput{Model: requestedModel})
+}
+
+func resolveUnifiedSalesPricing(ctx context.Context, resolver *ModelPricingResolver, channels *ChannelService, groupID *int64, input PricingInput) (*ResolvedPricing, error) {
 	if resolver == nil {
 		return nil, errors.New("model pricing resolver is required")
 	}
-	model := strings.TrimSpace(requestedModel)
+	model := strings.TrimSpace(input.Model)
 	if model == "" {
 		return nil, errors.New("requested model is required")
 	}
-	resolved := resolver.Resolve(ctx, PricingInput{Model: model})
+	input.Model = model
+	resolved := resolver.Resolve(ctx, input)
 	if channels != nil && groupID != nil {
 		if channelPricing := channels.GetChannelModelPricing(ctx, *groupID, model); channelPricing != nil {
 			if IsCompleteChannelSalesPricing(*channelPricing) {
-				resolved = resolver.Resolve(ctx, PricingInput{Model: model, GroupID: groupID})
+				input.GroupID = groupID
+				resolved = resolver.Resolve(ctx, input)
 			}
 		}
 	}
@@ -161,6 +181,11 @@ func CalculateUnifiedSalesPricingCost(
 	if log.ServiceTier != nil {
 		serviceTier = strings.TrimSpace(*log.ServiceTier)
 	}
+	// A channel-specific fast/flex multiplier is already frozen into the
+	// resolved prices. Do not apply the generic service-tier multiplier again.
+	if resolved.ExplicitServiceTier {
+		serviceTier = ""
+	}
 	return billingService.CalculateCostUnified(CostInput{
 		Ctx:     ctx,
 		Model:   model,
@@ -193,7 +218,14 @@ func ResolveV2SalesPricingContextAndCost(
 	log *UsageLog,
 	multiplier decimal.Decimal,
 ) (*SalesPricingContext, *CostBreakdown, error) {
-	resolved, err := ResolveUnifiedSalesPricing(ctx, resolver, channels, groupID, requestedModel)
+	input := PricingInput{Model: requestedModel, GroupID: groupID}
+	if log != nil {
+		input.RequestStartedAt = log.CreatedAt
+		if log.ServiceTier != nil {
+			input.ServiceTier = *log.ServiceTier
+		}
+	}
+	resolved, err := resolveUnifiedSalesPricing(ctx, resolver, channels, groupID, input)
 	if err != nil {
 		return nil, nil, err
 	}
@@ -241,6 +273,12 @@ func ApplyConfiguredSalesPricing(
 	legacyCost *CostBreakdown,
 	multiplier decimal.Decimal,
 ) (*CostBreakdown, error) {
+	if settingService != nil && !settingService.IsSalesPricingResolverEnabled(ctx) {
+		if err := ApplySalesPricingContextToUsageLog(log, legacyContext, legacyCost); err != nil {
+			return legacyCost, err
+		}
+		return legacyCost, nil
+	}
 	version := SalesPricingVersionLegacy
 	if settingService != nil {
 		version = settingService.GetSalesPricingVersion(ctx)
@@ -323,9 +361,35 @@ func ResolveLegacySalesPricingContext(
 	videoSeconds int,
 	cost *CostBreakdown,
 	multiplier decimal.Decimal,
+	settingServices ...*SettingService,
 ) (*SalesPricingContext, error) {
 	if billingMode == "" {
 		billingMode = BillingModeToken
+	}
+	if len(settingServices) > 0 && settingServices[0] != nil && !settingServices[0].IsSalesPricingResolverEnabled(ctx) {
+		resolved := &ResolvedPricing{Mode: billingMode, Source: "system"}
+		if billingMode == BillingModeToken && billingService != nil {
+			if pricing, err := billingService.GetModelPricing(effectiveModel); err == nil {
+				resolved.BasePricing = pricing
+			}
+		} else if billingMode != BillingModeToken {
+			units := requestCount
+			if units <= 0 {
+				units = 1
+			}
+			if billingMode == BillingModeVideo || billingMode == BillingModePerSecond {
+				if videoSeconds <= 0 {
+					videoSeconds = 1
+				}
+				units *= videoSeconds
+			}
+			if cost == nil {
+				return nil, errors.New("cost is required for realized non-token pricing")
+			}
+			resolved.DefaultPerRequestPrice = cost.TotalCost / float64(units)
+			resolved.DefaultPerRequestPricePresent = true
+		}
+		return BuildLegacySalesPricingContext(requestedModel, effectiveModel, legacySource, "", resolved, multiplier)
 	}
 	var resolved *ResolvedPricing
 	if billingMode == BillingModeToken {
@@ -449,6 +513,7 @@ func buildSalesPricingUsageSnapshot(log *UsageLog, pricing *SalesPricingContext,
 			OriginalTotal:   decimal.NewFromFloat(cost.TotalCost).StringFixed(10),
 			MultiplierTotal: decimal.NewFromFloat(cost.ActualCost).StringFixed(10),
 		},
+		Rule: map[string]string{"layer": pricing.RuleLayer, "service_tier": pricing.ServiceTier, "time_multiplier": pricing.TimeMultiplier.String()},
 	}
 	if log.ServiceTier != nil {
 		snapshot.ServiceTier = strings.TrimSpace(*log.ServiceTier)

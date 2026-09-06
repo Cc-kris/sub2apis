@@ -1,11 +1,38 @@
 package service
 
 import (
+	"context"
 	"testing"
 
+	"github.com/Wei-Shaw/sub2api/internal/config"
 	"github.com/shopspring/decimal"
 	"github.com/stretchr/testify/require"
 )
+
+type salesPricingSettingRepoStub struct {
+	values map[string]string
+}
+
+func (s *salesPricingSettingRepoStub) Get(context.Context, string) (*Setting, error) {
+	return nil, ErrSettingNotFound
+}
+func (s *salesPricingSettingRepoStub) GetValue(_ context.Context, key string) (string, error) {
+	if value, ok := s.values[key]; ok {
+		return value, nil
+	}
+	return "", ErrSettingNotFound
+}
+func (s *salesPricingSettingRepoStub) Set(context.Context, string, string) error { return nil }
+func (s *salesPricingSettingRepoStub) GetMultiple(context.Context, []string) (map[string]string, error) {
+	return s.values, nil
+}
+func (s *salesPricingSettingRepoStub) SetMultiple(context.Context, map[string]string) error {
+	return nil
+}
+func (s *salesPricingSettingRepoStub) GetAll(context.Context) (map[string]string, error) {
+	return s.values, nil
+}
+func (s *salesPricingSettingRepoStub) Delete(context.Context, string) error { return nil }
 
 func TestBuildV2SalesPricingContextUsesRequestedModelAndSharedPriceView(t *testing.T) {
 	ctx, err := BuildV2SalesPricingContext(" gpt-5.5 ", "catalog-v1", &ResolvedPricing{
@@ -120,4 +147,50 @@ func TestValidateSalesPricingTransition(t *testing.T) {
 	require.NoError(t, ValidateSalesPricingTransition(SalesPricingVersionV2, SalesPricingVersionShadow))
 	require.Error(t, ValidateSalesPricingTransition(SalesPricingVersionLegacy, SalesPricingVersionV2))
 	require.Error(t, ValidateSalesPricingTransition(SalesPricingVersionV2, SalesPricingVersionLegacy))
+}
+
+func TestApplyConfiguredSalesPricingDisabledUsesLegacyWithoutV2Snapshot(t *testing.T) {
+	repo := &salesPricingSettingRepoStub{values: map[string]string{
+		SettingKeySalesPricingResolverEnabled: "false",
+		SettingKeySalesPricingVersion:         string(SalesPricingVersionV2),
+	}}
+	settings := NewSettingService(repo, &config.Config{})
+	legacy := &SalesPricingContext{
+		RequestedModel: "alias",
+		EffectiveModel: "legacy-model",
+		Version:        SalesPricingVersionLegacy,
+		PricingSource:  PricingSourceLiteLLM,
+		Multiplier:     decimal.NewFromInt(1),
+	}
+	legacyCost := &CostBreakdown{TotalCost: 1.25, ActualCost: 1.25}
+	log := &UsageLog{}
+
+	applied, err := ApplyConfiguredSalesPricing(
+		context.Background(), settings, nil, nil, nil, nil, "alias", log,
+		legacy, legacyCost, decimal.NewFromInt(1),
+	)
+	require.NoError(t, err)
+	require.Same(t, legacyCost, applied)
+	require.Equal(t, "legacy", *log.SalesPricingVersion)
+	require.Nil(t, log.SalesPricingShadowSnapshot)
+	require.Equal(t, "legacy", log.SalesPricingSnapshot["version"])
+}
+
+func TestGatewayPricingResolversAreSkippedWhenDisabled(t *testing.T) {
+	settings := NewSettingService(&salesPricingSettingRepoStub{values: map[string]string{SettingKeySalesPricingResolverEnabled: "false"}}, nil)
+	group := &Group{ID: 7}
+	key := &APIKey{Group: group}
+
+	claude := &GatewayService{settingService: settings, resolver: &ModelPricingResolver{}}
+	require.Nil(t, claude.resolveChannelPricing(context.Background(), "model", key))
+
+	openai := &OpenAIGatewayService{settingService: settings, resolver: &ModelPricingResolver{}}
+	require.Nil(t, openai.resolveOpenAIChannelPricing(context.Background(), "model", key))
+}
+
+func TestOpenAIRequestedTextBillingResolverSkippedWhenDisabled(t *testing.T) {
+	settings := NewSettingService(&salesPricingSettingRepoStub{values: map[string]string{SettingKeySalesPricingResolverEnabled: "false"}}, nil)
+	svc := &OpenAIGatewayService{settingService: settings, resolver: &ModelPricingResolver{}}
+	group := &Group{ID: 1}
+	require.False(t, svc.shouldBillOpenAINonImageResultAsRequestedText(context.Background(), &OpenAIForwardResult{}, &APIKey{Group: group}, &OpenAIRecordUsageInput{ChannelUsageFields: ChannelUsageFields{BillingModelSource: BillingModelSourceChannelMapped, OriginalModel: "text", ChannelMappedModel: "image"}}))
 }

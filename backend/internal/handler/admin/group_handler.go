@@ -4,8 +4,10 @@ import (
 	"bytes"
 	"encoding/json"
 	"fmt"
+	"net/http"
 	"strconv"
 	"strings"
+	"time"
 
 	"github.com/Wei-Shaw/sub2api/internal/handler/dto"
 	"github.com/Wei-Shaw/sub2api/internal/pkg/response"
@@ -84,7 +86,7 @@ func NewGroupHandler(adminService service.AdminService, dashboardService *servic
 type CreateGroupRequest struct {
 	Name             string             `json:"name" binding:"required"`
 	Description      string             `json:"description"`
-	Platform         string             `json:"platform" binding:"omitempty,oneof=anthropic openai gemini antigravity grok seedace"`
+	Platform         string             `json:"platform" binding:"omitempty,oneof=anthropic openai gemini antigravity grok seedace kimi zhipu deepseek"`
 	RateMultiplier   float64            `json:"rate_multiplier"`
 	IsExclusive      bool               `json:"is_exclusive"`
 	SubscriptionType string             `json:"subscription_type" binding:"omitempty,oneof=standard subscription"`
@@ -119,7 +121,9 @@ type CreateGroupRequest struct {
 	DefaultMappedModel          string                                    `json:"default_mapped_model"`
 	MessagesDispatchModelConfig service.OpenAIMessagesDispatchModelConfig `json:"messages_dispatch_model_config"`
 	// 分组 RPM 上限（0 = 不限制）
-	RPMLimit int `json:"rpm_limit"`
+	RPMLimit                  int                                  `json:"rpm_limit"`
+	LongContextPricingEnabled *bool                                `json:"long_context_pricing_enabled"`
+	ModelPricing              map[string]service.GroupModelPricing `json:"model_pricing"`
 	// 从指定分组复制账号（创建后自动绑定）
 	CopyAccountsFromGroupIDs []int64 `json:"copy_accounts_from_group_ids"`
 }
@@ -128,7 +132,7 @@ type CreateGroupRequest struct {
 type UpdateGroupRequest struct {
 	Name             string             `json:"name"`
 	Description      string             `json:"description"`
-	Platform         string             `json:"platform" binding:"omitempty,oneof=anthropic openai gemini antigravity grok seedace"`
+	Platform         string             `json:"platform" binding:"omitempty,oneof=anthropic openai gemini antigravity grok seedace kimi zhipu deepseek"`
 	RateMultiplier   *float64           `json:"rate_multiplier"`
 	IsExclusive      *bool              `json:"is_exclusive"`
 	Status           string             `json:"status" binding:"omitempty,oneof=active inactive"`
@@ -164,7 +168,9 @@ type UpdateGroupRequest struct {
 	DefaultMappedModel          *string                                    `json:"default_mapped_model"`
 	MessagesDispatchModelConfig *service.OpenAIMessagesDispatchModelConfig `json:"messages_dispatch_model_config"`
 	// 分组 RPM 上限（0 = 不限制）；nil 表示未提供不改动
-	RPMLimit *int `json:"rpm_limit"`
+	RPMLimit                  *int                                 `json:"rpm_limit"`
+	LongContextPricingEnabled *bool                                `json:"long_context_pricing_enabled"`
+	ModelPricing              map[string]service.GroupModelPricing `json:"model_pricing"`
 	// 从指定分组复制账号（同步操作：先清空当前分组的账号绑定，再绑定源分组的账号）
 	CopyAccountsFromGroupIDs []int64 `json:"copy_accounts_from_group_ids"`
 }
@@ -291,6 +297,9 @@ func (h *GroupHandler) Create(c *gin.Context) {
 		DefaultMappedModel:              req.DefaultMappedModel,
 		MessagesDispatchModelConfig:     req.MessagesDispatchModelConfig,
 		RPMLimit:                        req.RPMLimit,
+		LongContextPricingEnabled:       req.LongContextPricingEnabled != nil && *req.LongContextPricingEnabled,
+		LongContextPricingProvided:      req.LongContextPricingEnabled != nil,
+		ModelPricing:                    req.ModelPricing,
 		CopyAccountsFromGroupIDs:        req.CopyAccountsFromGroupIDs,
 	})
 	if err != nil {
@@ -351,6 +360,8 @@ func (h *GroupHandler) Update(c *gin.Context) {
 		DefaultMappedModel:              req.DefaultMappedModel,
 		MessagesDispatchModelConfig:     req.MessagesDispatchModelConfig,
 		RPMLimit:                        req.RPMLimit,
+		LongContextPricingEnabled:       req.LongContextPricingEnabled,
+		ModelPricing:                    req.ModelPricing,
 		CopyAccountsFromGroupIDs:        req.CopyAccountsFromGroupIDs,
 	})
 	if err != nil {
@@ -402,6 +413,12 @@ func (h *GroupHandler) GetStats(c *gin.Context) {
 // GET /api/v1/admin/groups/usage-summary?timezone=Asia/Shanghai
 func (h *GroupHandler) GetUsageSummary(c *gin.Context) {
 	userTZ := c.Query("timezone")
+	if userTZ != "" {
+		if _, err := time.LoadLocation(userTZ); err != nil {
+			response.Error(c, http.StatusUnprocessableEntity, "invalid timezone")
+			return
+		}
+	}
 	now := timezone.NowInUserLocation(userTZ)
 	todayStart := timezone.StartOfDayInUserLocation(now, userTZ)
 

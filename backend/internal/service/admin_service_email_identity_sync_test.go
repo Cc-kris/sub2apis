@@ -44,6 +44,8 @@ func (s *emailSyncRepoStub) Create(_ context.Context, user *User) error {
 	return nil
 }
 
+func (s *emailSyncRepoStub) CountByEmailDomain(context.Context, string) (int, error) { return 0, nil }
+
 func (s *emailSyncRepoStub) GetByID(_ context.Context, _ int64) (*User, error) {
 	if s.user == nil {
 		return nil, ErrUserNotFound

@@ -971,6 +971,10 @@ func buildOpsErrorLogsWhere(filter *service.OpsErrorLogFilter) (string, []any) {
 		args = append(args, *filter.AccountID)
 		clauses = append(clauses, "e.account_id = $"+itoa(len(args)))
 	}
+	if filter.UserID != nil && *filter.UserID > 0 {
+		args = append(args, *filter.UserID)
+		clauses = append(clauses, "COALESCE(e.user_id, (SELECT ak.user_id FROM api_keys ak WHERE ak.id = e.api_key_id)) = $"+itoa(len(args)))
+	}
 	if phase := phaseFilter; phase != "" {
 		args = append(args, phase)
 		clauses = append(clauses, "e.error_phase = $"+itoa(len(args)))

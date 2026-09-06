@@ -99,6 +99,15 @@
 }
 .dark .theme-tour-popover .driver-popover-description { color: #cbd5e1 !important; }
 
+/* The localized tour body includes an emerald action hint. The original
+ * #10b981 shade does not meet AA contrast on the white popover background. */
+.theme-tour-popover .driver-popover-description [style*="color: #10b981"] {
+  color: #047857 !important;
+}
+.dark .theme-tour-popover .driver-popover-description [style*="color: #10b981"] {
+  color: #6ee7b7 !important;
+}
+
 /* 5. Footer Area - Flex Row with Left/Right Containers */
 .theme-tour-popover .driver-popover-footer {
   display: flex !important;

@@ -3,6 +3,7 @@ package service
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"log/slog"
 	"sync/atomic"
@@ -84,7 +85,7 @@ const (
 // GetWebSearchEmulationConfig returns the configuration with in-process cache + singleflight.
 func (s *SettingService) GetWebSearchEmulationConfig(ctx context.Context) (*WebSearchEmulationConfig, error) {
 	if cached := webSearchEmulationCache.Load(); cached != nil {
-		if c, ok := cached.(*cachedWebSearchEmulationConfig); ok && time.Now().UnixNano() < c.expiresAt {
+		if c, ok := cached.(*cachedWebSearchEmulationConfig); ok && c != nil && time.Now().UnixNano() < c.expiresAt {
 			return c.config, nil
 		}
 	}
@@ -106,6 +107,17 @@ func (s *SettingService) loadWebSearchConfigFromDB() (*WebSearchEmulationConfig,
 
 	raw, err := s.settingRepo.GetValue(dbCtx, SettingKeyWebSearchEmulationConfig)
 	if err != nil {
+		// A missing optional setting means the feature has not been configured yet.
+		// Treat it exactly like the empty, disabled configuration rather than
+		// returning a transient 404 while the settings page initializes it.
+		if errors.Is(err, ErrSettingNotFound) {
+			cfg := &WebSearchEmulationConfig{}
+			webSearchEmulationCache.Store(&cachedWebSearchEmulationConfig{
+				config:    cfg,
+				expiresAt: time.Now().Add(webSearchEmulationCacheTTL).UnixNano(),
+			})
+			return cfg, nil
+		}
 		webSearchEmulationCache.Store(&cachedWebSearchEmulationConfig{
 			config:    &WebSearchEmulationConfig{},
 			expiresAt: time.Now().Add(webSearchEmulationErrorTTL).UnixNano(),

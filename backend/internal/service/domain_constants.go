@@ -43,6 +43,10 @@ const (
 	PlatformAntigravity = domain.PlatformAntigravity
 	PlatformGrok        = domain.PlatformGrok
 	PlatformSeedace     = domain.PlatformSeedace
+	PlatformOllama      = domain.PlatformOllama
+	PlatformKimi        = domain.PlatformKimi
+	PlatformZhipu       = domain.PlatformZhipu
+	PlatformDeepSeek    = domain.PlatformDeepSeek
 )
 
 // AllowedQuotaPlatforms 是允许设置 user × platform quota 的平台列表（单一权威来源）。
@@ -55,6 +59,9 @@ var AllowedQuotaPlatforms = []string{
 	PlatformAntigravity,
 	PlatformGrok,
 	PlatformSeedace,
+	PlatformKimi,
+	PlatformZhipu,
+	PlatformDeepSeek,
 }
 
 // IsAllowedQuotaPlatform 报告 s 是否为合法的 quota platform 标识。
@@ -129,21 +136,24 @@ const (
 	SettingKeyRegistrationEnabled              = "registration_enabled"                // 是否开放注册
 	SettingKeyEmailVerifyEnabled               = "email_verify_enabled"                // 是否开启邮件验证
 	SettingKeyRegistrationEmailSuffixWhitelist = "registration_email_suffix_whitelist" // 注册邮箱后缀白名单（JSON 数组）
-	SettingKeyPromoCodeEnabled                 = "promo_code_enabled"                  // 是否启用优惠码功能
-	SettingKeyPasswordResetEnabled             = "password_reset_enabled"              // 是否启用忘记密码功能（需要先开启邮件验证）
-	SettingKeyFrontendURL                      = "frontend_url"                        // 前端基础URL，用于生成邮件中的重置密码链接
-	SettingKeyInvitationCodeEnabled            = "invitation_code_enabled"             // 是否启用邀请码注册
-	SettingKeyAffiliateEnabled                 = "affiliate_enabled"                   // 邀请返利功能总开关
-	SettingKeyAffiliateRebateRate              = "affiliate_rebate_rate"               // 邀请返利比例（百分比，0-100）
-	SettingKeyAffiliateRebateFreezeHours       = "affiliate_rebate_freeze_hours"       // 返利冻结期（小时，0=不冻结）
-	SettingKeyAffiliateRebateDurationDays      = "affiliate_rebate_duration_days"      // 返利有效期（天，0=永久）
-	SettingKeyAffiliateRebatePerInviteeCap     = "affiliate_rebate_per_invitee_cap"    // 单人返利上限（0=无上限）
-	SettingKeyRiskControlEnabled               = "risk_control_enabled"                // 是否启用风控中心入口与审计链路
-	SettingKeyContentModerationConfig          = "content_moderation_config"           // 内容审计配置（JSON）
-	SettingKeyLoginAgreementEnabled            = "login_agreement_enabled"             // 登录前是否要求同意条款
-	SettingKeyLoginAgreementMode               = "login_agreement_mode"                // 条款确认展示模式：modal / checkbox
-	SettingKeyLoginAgreementUpdatedAt          = "login_agreement_updated_at"          // 条款更新日期（展示用）
-	SettingKeyLoginAgreementDocuments          = "login_agreement_documents"           // 条款文档列表（JSON，Markdown 内容）
+	SettingKeyRegistrationDomainLimitEnabled   = "registration_domain_limit_enabled"
+	SettingKeyRegistrationDomainLimitPerDomain = "registration_domain_limit_per_domain"
+	SettingKeyXSearchPricePerRequest           = "x_search_price_per_request"       // x_search 单次 USD 价格（decimal(20,10)）
+	SettingKeyPromoCodeEnabled                 = "promo_code_enabled"               // 是否启用优惠码功能
+	SettingKeyPasswordResetEnabled             = "password_reset_enabled"           // 是否启用忘记密码功能（需要先开启邮件验证）
+	SettingKeyFrontendURL                      = "frontend_url"                     // 前端基础URL，用于生成邮件中的重置密码链接
+	SettingKeyInvitationCodeEnabled            = "invitation_code_enabled"          // 是否启用邀请码注册
+	SettingKeyAffiliateEnabled                 = "affiliate_enabled"                // 邀请返利功能总开关
+	SettingKeyAffiliateRebateRate              = "affiliate_rebate_rate"            // 邀请返利比例（百分比，0-100）
+	SettingKeyAffiliateRebateFreezeHours       = "affiliate_rebate_freeze_hours"    // 返利冻结期（小时，0=不冻结）
+	SettingKeyAffiliateRebateDurationDays      = "affiliate_rebate_duration_days"   // 返利有效期（天，0=永久）
+	SettingKeyAffiliateRebatePerInviteeCap     = "affiliate_rebate_per_invitee_cap" // 单人返利上限（0=无上限）
+	SettingKeyRiskControlEnabled               = "risk_control_enabled"             // 是否启用风控中心入口与审计链路
+	SettingKeyContentModerationConfig          = "content_moderation_config"        // 内容审计配置（JSON）
+	SettingKeyLoginAgreementEnabled            = "login_agreement_enabled"          // 登录前是否要求同意条款
+	SettingKeyLoginAgreementMode               = "login_agreement_mode"             // 条款确认展示模式：modal / checkbox
+	SettingKeyLoginAgreementUpdatedAt          = "login_agreement_updated_at"       // 条款更新日期（展示用）
+	SettingKeyLoginAgreementDocuments          = "login_agreement_documents"        // 条款文档列表（JSON，Markdown 内容）
 
 	// 邮件服务设置
 	SettingKeySMTPHost     = "smtp_host"      // SMTP服务器地址
@@ -383,6 +393,26 @@ const (
 	// It is intentionally separate from the legacy available-channels aggregate
 	// view so the two features can be enabled and rolled back independently.
 	SettingKeyModelSquareEnabled = "model_square_enabled"
+
+	// SettingKeyOpenAIRemoteCompactionV2Enabled controls the native Remote
+	// Compaction V2 protocol. The legacy /responses/compact path remains
+	// available when this switch is off. Missing values default to enabled.
+	SettingKeyOpenAIRemoteCompactionV2Enabled = "openai_remote_compaction_v2_enabled"
+
+	// SettingKeyGroupUsageRollupEnabled controls the group-usage rollup reader
+	// and worker. When off, reads use the existing realtime path and the worker
+	// pauses; rollup tables and invalidations remain intact for recovery.
+	SettingKeyGroupUsageRollupEnabled = "group_usage_rollup_enabled"
+
+	// SettingKeySalesPricingResolverEnabled independently controls the unified
+	// sales-pricing resolver. When off, billing uses the legacy pricing path and
+	// does not create new shadow or v2 pricing snapshots. Missing values default
+	// to enabled for upgrade compatibility.
+	SettingKeySalesPricingResolverEnabled = "sales_pricing_resolver_enabled"
+	// SettingKeyOpenAITeamLinkedResolverEnabled controls Team-wide blocking and
+	// cross-account recovery. Missing values default to enabled; a transient
+	// read failure preserves the last confirmed state and fails closed initially.
+	SettingKeyOpenAITeamLinkedResolverEnabled = "openai_team_linked_resolver_enabled"
 
 	// Sales pricing rollout state. The version controls whether customer
 	// billing uses legacy, shadow comparison, or the unified v2 pricing model.

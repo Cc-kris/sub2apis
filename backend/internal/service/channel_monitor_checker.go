@@ -202,6 +202,14 @@ var providerAdapters = map[string]providerAdapter{
 		},
 		textPath: "candidates.0.content.parts.0.text",
 	},
+	MonitorProviderKimi:     providerOpenAICompatibleAdapter,
+	MonitorProviderZhipu:    providerOpenAICompatibleAdapter,
+	MonitorProviderDeepSeek: providerOpenAICompatibleAdapter,
+}
+
+var supportedMonitorProviders = map[string]struct{}{
+	MonitorProviderOpenAI: {}, MonitorProviderAnthropic: {}, MonitorProviderGemini: {}, MonitorProviderGrok: {},
+	MonitorProviderAntigravity: {}, MonitorProviderKimi: {}, MonitorProviderZhipu: {}, MonitorProviderDeepSeek: {},
 }
 
 //nolint:gochecknoglobals // 适配器表是只读静态数据，初始化后不变更。
@@ -228,6 +236,11 @@ var providerGrokChatAdapter = providerAdapter{
 	buildHeaders: providerOpenAIChatAdapter.buildHeaders,
 	textPath:     providerOpenAIChatAdapter.textPath,
 }
+
+// providerOpenAICompatibleAdapter is shared by the Chinese OpenAI-compatible
+// providers. Quota mode never calls this adapter; active mode uses the same
+// chat-completions contract while preserving the configured endpoint.
+var providerOpenAICompatibleAdapter = providerGrokChatAdapter
 
 //nolint:gochecknoglobals // 适配器表是只读静态数据，初始化后不变更。
 var providerOpenAIResponsesAdapter = providerAdapter{
@@ -259,7 +272,7 @@ func providerAdapterFor(provider, apiMode string) (providerAdapter, string, bool
 // isSupportedProvider 校验 provider 字符串是否在 adapter 表中。
 // 供 validate.go 的 validateProvider 复用，避免两份 switch 漂移。
 func isSupportedProvider(p string) bool {
-	_, ok := providerAdapters[p]
+	_, ok := supportedMonitorProviders[p]
 	return ok
 }
 

@@ -2846,6 +2846,20 @@ func (r *oauthPendingFlowUserRepo) ExistsByEmail(ctx context.Context, email stri
 	return count > 0, err
 }
 
+func (r *oauthPendingFlowUserRepo) CountByEmailDomain(ctx context.Context, domain string) (int, error) {
+	users, err := r.client.User.Query().All(ctx)
+	if err != nil {
+		return 0, err
+	}
+	count := 0
+	for _, user := range users {
+		if service.RegistrationEmailDomain(user.Email) == domain {
+			count++
+		}
+	}
+	return count, nil
+}
+
 func (r *oauthPendingFlowUserRepo) RemoveGroupFromAllowedGroups(context.Context, int64) (int64, error) {
 	panic("unexpected RemoveGroupFromAllowedGroups call")
 }

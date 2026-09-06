@@ -59,7 +59,7 @@ type UsageLogRepository interface {
 	GetAllGroupUsageSummary(ctx context.Context, todayStart time.Time) ([]usagestats.GroupUsageSummary, error)
 	GetAPIKeyUsageTrend(ctx context.Context, startTime, endTime time.Time, granularity string, limit int) ([]usagestats.APIKeyUsageTrendPoint, error)
 	GetUserUsageTrend(ctx context.Context, startTime, endTime time.Time, granularity string, limit int) ([]usagestats.UserUsageTrendPoint, error)
-	GetUserSpendingRanking(ctx context.Context, startTime, endTime time.Time, limit int) (*usagestats.UserSpendingRankingResponse, error)
+	GetUserSpendingRanking(ctx context.Context, startTime, endTime time.Time, limit int, userID ...int64) (*usagestats.UserSpendingRankingResponse, error)
 	GetBatchUserUsageStats(ctx context.Context, userIDs []int64, startTime, endTime time.Time) (map[int64]*usagestats.BatchUserUsageStats, error)
 	GetBatchAPIKeyUsageStats(ctx context.Context, apiKeyIDs []int64, startTime, endTime time.Time) (map[int64]*usagestats.BatchAPIKeyUsageStats, error)
 
@@ -83,6 +83,12 @@ type UsageLogRepository interface {
 	GetAccountStatsAggregated(ctx context.Context, accountID int64, startTime, endTime time.Time) (*usagestats.UsageStats, error)
 	GetModelStatsAggregated(ctx context.Context, modelName string, startTime, endTime time.Time) (*usagestats.UsageStats, error)
 	GetDailyStatsAggregated(ctx context.Context, userID int64, startTime, endTime time.Time) ([]map[string]any, error)
+}
+
+// GroupUsageSummaryProvider supplies pre-aggregated group usage. Implementations
+// must return an empty source or "realtime" when the rollup is unavailable.
+type GroupUsageSummaryProvider interface {
+	GetGroupUsageSummary(ctx context.Context, todayStart time.Time) ([]usagestats.GroupUsageSummary, error)
 }
 
 type accountWindowStatsBatchReader interface {
@@ -292,6 +298,8 @@ type AccountUsageService struct {
 	cache                   *UsageCache
 	identityCache           IdentityCache
 	tlsFPProfileService     *TLSFingerprintProfileService
+	cnQuotaService          *CNProviderQuotaService
+	cnBalanceService        *CNProviderBalanceService
 }
 
 // NewAccountUsageService 创建AccountUsageService实例
@@ -318,6 +326,20 @@ func NewAccountUsageService(
 		cache:                   cache,
 		identityCache:           identityCache,
 		tlsFPProfileService:     tlsFPProfileService,
+	}
+}
+
+// SetCNQuotaService wires the domestic provider quota resolver after service
+// construction, keeping the existing dependency graph backward compatible.
+func (s *AccountUsageService) SetCNQuotaService(quota *CNProviderQuotaService) {
+	if s != nil {
+		s.cnQuotaService = quota
+	}
+}
+
+func (s *AccountUsageService) SetCNBalanceService(balance *CNProviderBalanceService) {
+	if s != nil {
+		s.cnBalanceService = balance
 	}
 }
 
@@ -364,6 +386,38 @@ func (s *AccountUsageService) GetUsage(ctx context.Context, accountID int64, for
 			s.tryClearRecoverableAccountError(ctx, account)
 		}
 		return usage, err
+	}
+
+	if isDomesticOpenAICompatiblePlatform(account.Platform) {
+		if s.cnQuotaService == nil && s.cnBalanceService == nil {
+			return &UsageInfo{Source: "unknown", ErrorCode: "quota_unconfigured", Error: "domestic provider quota resolver is not configured"}, nil
+		}
+		var snapshot *CNProviderQuotaSnapshot
+		var err error
+		if s.cnBalanceService != nil {
+			_, snapshot, err = s.cnBalanceService.GetBalance(ctx, account, len(force) > 0 && force[0])
+		} else {
+			snapshot, err = s.cnQuotaService.GetSnapshot(ctx, account, len(force) > 0 && force[0])
+		}
+		if snapshot == nil {
+			return &UsageInfo{Source: "failed", Error: "quota snapshot unavailable"}, err
+		}
+		info := &UsageInfo{Source: snapshot.State, UpdatedAt: &snapshot.FetchedAt, Error: snapshot.Error}
+		if snapshot.State == "failed" {
+			info.ErrorCode = "quota_fetch_failed"
+		}
+		if snapshot.Remaining != nil && snapshot.Limit != nil && *snapshot.Limit > 0 {
+			used := 100 - (*snapshot.Remaining / *snapshot.Limit * 100)
+			if used < 0 {
+				used = 0
+			}
+			info.FiveHour = &UsageProgress{Utilization: used, ResetsAt: snapshot.ResetAt}
+		}
+		return info, err
+	}
+
+	if account.Platform == PlatformOllama {
+		return NewOllamaUsageService(s.usageLogRepo).GetUsage(ctx, accountID, time.Now())
 	}
 
 	// 只有oauth类型账号可以通过API获取usage（有profile scope）

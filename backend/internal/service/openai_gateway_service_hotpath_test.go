@@ -50,6 +50,24 @@ func TestExtractOpenAIRequestMetaFromBody(t *testing.T) {
 	}
 }
 
+func TestOpenAICompatResponsesTerminalEventIncludesCancellationAndError(t *testing.T) {
+	for _, eventType := range []string{
+		"response.completed",
+		"response.done",
+		"response.incomplete",
+		"response.failed",
+		"response.cancelled",
+		"response.canceled",
+		"error",
+	} {
+		t.Run(eventType, func(t *testing.T) {
+			require.True(t, isOpenAICompatResponsesTerminalEvent(eventType))
+		})
+	}
+
+	require.False(t, isOpenAICompatResponsesTerminalEvent("response.output_text.delta"))
+}
+
 func TestExtractOpenAIReasoningEffortFromBody(t *testing.T) {
 	tests := []struct {
 		name      string

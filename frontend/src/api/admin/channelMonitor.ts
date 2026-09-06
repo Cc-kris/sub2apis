@@ -5,15 +5,24 @@
 
 import { apiClient } from '../client'
 
-export type Provider = 'openai' | 'anthropic' | 'gemini' | 'grok'
+export type Provider = 'openai' | 'anthropic' | 'gemini' | 'grok' | 'antigravity' | 'kimi' | 'zhipu' | 'deepseek'
 export type MonitorStatus = 'operational' | 'degraded' | 'failed' | 'error'
 export type BodyOverrideMode = 'off' | 'merge' | 'replace'
 export type APIMode = 'chat_completions' | 'responses'
+export type MonitorMode = 'active' | 'passive' | 'quota'
+
+export interface ChannelMonitorQuotaSnapshot {
+  state: string
+  updated_at?: string | null
+  summary?: Record<string, unknown>
+}
 
 export interface ChannelMonitor {
   id: number
   name: string
   provider: Provider
+  mode: MonitorMode
+  account_id?: number | null
   api_mode: APIMode
   endpoint: string
   api_key_masked: string
@@ -45,6 +54,14 @@ export interface ChannelMonitor {
   extra_headers: Record<string, string>
   body_override_mode: BodyOverrideMode
   body_override: Record<string, unknown> | null
+  quota_snapshot?: ChannelMonitorQuotaSnapshot | null
+}
+
+export interface ChannelMonitorAccountOption { id: number; name: string; platform: string; status: string }
+
+export async function searchChannelMonitorAccounts(params: { provider?: string; search?: string; page?: number; page_size?: number }) {
+  const { data } = await apiClient.get<{ items: ChannelMonitorAccountOption[]; total: number }>("/admin/channel-monitors/accounts", { params })
+  return data
 }
 
 export interface ExtraModelStatus {
@@ -72,6 +89,8 @@ export interface ListResponse {
 export interface CreateParams {
   name: string
   provider: Provider
+  mode?: MonitorMode
+  account_id?: number | null
   api_mode?: APIMode
   endpoint: string
   api_key: string

@@ -6,6 +6,7 @@ import (
 	"time"
 
 	"github.com/Wei-Shaw/sub2api/internal/domain"
+	"github.com/Wei-Shaw/sub2api/internal/service"
 )
 
 type User struct {
@@ -160,7 +161,9 @@ type AdminGroup struct {
 	RateLimitedAccountCount int64          `json:"rate_limited_account_count,omitempty"`
 
 	// 分组排序
-	SortOrder int `json:"sort_order"`
+	SortOrder                 int                                  `json:"sort_order"`
+	LongContextPricingEnabled bool                                 `json:"long_context_pricing_enabled"`
+	ModelPricing              map[string]service.GroupModelPricing `json:"model_pricing"`
 }
 
 type Account struct {

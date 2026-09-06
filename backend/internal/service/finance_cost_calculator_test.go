@@ -128,6 +128,29 @@ func TestFinanceCostCalculatorTokenItemsMultiplierAndPrecision(t *testing.T) {
 	require.Equal(t, false, result.Detail["multiplier_applied"])
 }
 
+func TestFinanceCostCalculatorUsesGenericCacheWriteWithoutTTLBreakdown(t *testing.T) {
+	multiplier := decimal.NewFromInt(1)
+	quote := FinancePriceQuote{
+		VersionID: 12, Source: FinancePricingSourceUpstreamExact, BillingMode: "token", Currency: "USD",
+		USDExchangeRate: decimal.NewFromInt(1),
+		Detail:          FinancePriceDetail{Standard: FinanceRateCard{CacheWrite5m: financeDecimal("5")}},
+	}
+	result := NewFinanceCostCalculator().Calculate(FinanceCostCalculatorInput{
+		Attempt: UsageUpstreamAttempt{
+			AccountID: 9, UpstreamModel: "gpt-test", CacheCreationTokens: 100,
+			UpstreamCostMultiplier: &multiplier, Billable: true,
+		},
+		BillingMode: "token",
+		Price:       &quote,
+	})
+
+	require.Equal(t, FinanceCostStatusExact, result.Status)
+	require.Equal(t, "0.0005000000", result.Amount.StringFixed(10))
+	require.Len(t, result.Items, 1)
+	require.Equal(t, "cache_write", result.Items[0].Item)
+	require.Equal(t, int64(100), result.Detail["usage"].(map[string]any)["cache_creation_tokens"])
+}
+
 func TestFinanceCostCalculatorFastUsesFastCardWithoutStandardStacking(t *testing.T) {
 	calculator := NewFinanceCostCalculator()
 	multiplier := decimal.NewFromInt(1)

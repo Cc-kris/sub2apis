@@ -7,7 +7,7 @@
       <LoadingSpinner />
     </div>
     <div v-else-if="trendData.length > 0 && chartData" class="h-48">
-      <Line :data="chartData" :options="lineOptions" />
+      <Line :data="chartData" :options="lineOptions" :aria-label="t('admin.dashboard.tokenUsageTrend')" />
     </div>
     <div
       v-else

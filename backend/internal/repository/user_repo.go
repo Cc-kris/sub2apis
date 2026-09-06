@@ -40,6 +40,14 @@ func newUserRepositoryWithSQL(client *dbent.Client, sqlq sqlExecutor) *userRepos
 }
 
 func (r *userRepository) Create(ctx context.Context, userIn *service.User) error {
+	return r.createWithRegistrationDomainLimit(ctx, userIn, 0)
+}
+
+func (r *userRepository) CreateWithRegistrationDomainLimit(ctx context.Context, userIn *service.User, limit int) error {
+	return r.createWithRegistrationDomainLimit(ctx, userIn, limit)
+}
+
+func (r *userRepository) createWithRegistrationDomainLimit(ctx context.Context, userIn *service.User, limit int) error {
 	if userIn == nil {
 		return nil
 	}
@@ -63,6 +71,29 @@ func (r *userRepository) Create(ctx context.Context, userIn *service.User) error
 			txClient = existingTx.Client()
 		} else {
 			txClient = r.client
+		}
+	}
+	// Serialize registrations sharing a normalized domain so the service-side
+	// count and subsequent insert cannot race across application instances.
+	if domain := service.RegistrationEmailDomain(userIn.Email); domain != "" {
+		lockSQL := txAwareSQLExecutor(txCtx, r.sql, r.client)
+		if _, lockErr := lockSQL.ExecContext(txCtx, `SELECT pg_advisory_xact_lock(hashtext($1))`, "registration-domain:"+domain); lockErr != nil {
+			return lockErr
+		}
+		if limit > 0 {
+			users, countErr := txClient.User.Query().Where(dbuser.EmailContains("@" + domain)).All(txCtx)
+			if countErr != nil {
+				return countErr
+			}
+			count := 0
+			for _, candidate := range users {
+				if service.RegistrationEmailDomain(candidate.Email) == domain {
+					count++
+				}
+			}
+			if count >= limit {
+				return service.ErrRegistrationDomainLimit
+			}
 		}
 	}
 
@@ -814,6 +845,21 @@ func (r *userRepository) BatchAddConcurrency(ctx context.Context, userIDs []int6
 
 func (r *userRepository) ExistsByEmail(ctx context.Context, email string) (bool, error) {
 	return r.client.User.Query().Where(userEmailLookupPredicate(email)).Exist(ctx)
+}
+
+func (r *userRepository) CountByEmailDomain(ctx context.Context, domain string) (int, error) {
+	domain = strings.ToLower(strings.TrimSpace(domain))
+	users, err := r.client.User.Query().Where(dbuser.EmailContains("@" + domain)).All(ctx)
+	if err != nil {
+		return 0, err
+	}
+	count := 0
+	for _, user := range users {
+		if service.RegistrationEmailDomain(user.Email) == domain {
+			count++
+		}
+	}
+	return count, nil
 }
 
 func ensureNormalizedEmailAvailableWithClient(ctx context.Context, client *dbent.Client, userID int64, email string) error {

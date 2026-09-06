@@ -87,8 +87,99 @@ type ChannelModelPricing struct {
 	ImageOutputPrice *float64          // 图片输出价格（向后兼容）
 	PerRequestPrice  *float64          // 默认按次计费价格（USD）
 	Intervals        []PricingInterval // 区间定价列表
-	CreatedAt        time.Time
-	UpdatedAt        time.Time
+	// TimePricing defines optional timezone-aware period multipliers. NULL/empty means 1.
+	TimePricing    *TimePricingConfig
+	FastMultiplier *float64
+	FlexMultiplier *float64
+	CreatedAt      time.Time
+	UpdatedAt      time.Time
+}
+
+type TimePricingConfig struct {
+	Timezone string              `json:"timezone"`
+	Periods  []TimePricingPeriod `json:"periods"`
+}
+
+type TimePricingPeriod struct {
+	StartMinute int     `json:"start_minute"`
+	EndMinute   int     `json:"end_minute"`
+	Multiplier  float64 `json:"multiplier"`
+}
+
+func (c *TimePricingConfig) Validate() error {
+	if c == nil {
+		return nil
+	}
+	if strings.TrimSpace(c.Timezone) == "" {
+		return fmt.Errorf("time pricing timezone is required")
+	}
+	if _, err := time.LoadLocation(c.Timezone); err != nil {
+		return fmt.Errorf("invalid time pricing timezone: %w", err)
+	}
+	last := -1
+	for i, p := range c.Periods {
+		if p.StartMinute < 0 || p.EndMinute > 1440 || p.StartMinute >= p.EndMinute || p.Multiplier <= 0 {
+			return fmt.Errorf("invalid time pricing period %d", i)
+		}
+		if p.StartMinute < last {
+			return fmt.Errorf("overlapping time pricing periods")
+		}
+		last = p.EndMinute
+	}
+	return nil
+}
+
+func (p *ChannelModelPricing) MultiplierAt(at time.Time, tier string) float64 {
+	if p == nil {
+		return 1
+	}
+	m := 1.0
+	if p.TimePricing != nil {
+		if loc, err := time.LoadLocation(p.TimePricing.Timezone); err == nil {
+			minute := at.In(loc).Hour()*60 + at.In(loc).Minute()
+			for _, period := range p.TimePricing.Periods {
+				if minute >= period.StartMinute && minute < period.EndMinute {
+					m = period.Multiplier
+					break
+				}
+			}
+		}
+	}
+	switch strings.ToLower(strings.TrimSpace(tier)) {
+	case "fast":
+		if p.FastMultiplier != nil && *p.FastMultiplier > 0 {
+			m *= *p.FastMultiplier
+		}
+	case "flex":
+		if p.FlexMultiplier != nil && *p.FlexMultiplier > 0 {
+			m *= *p.FlexMultiplier
+		}
+	}
+	return m
+}
+
+// ValidateModifiers validates time and service-tier modifiers before they are
+// persisted. Reads deliberately remain fail-safe: malformed historical JSON is
+// treated as multiplier 1 by MultiplierAt rather than affecting billing.
+func (p *ChannelModelPricing) ValidateModifiers() error {
+	if p == nil {
+		return nil
+	}
+	if err := p.TimePricing.Validate(); err != nil {
+		return err
+	}
+	for _, modifier := range []struct {
+		name  string
+		value *float64
+	}{
+		{name: "fast_multiplier", value: p.FastMultiplier},
+		{name: "flex_multiplier", value: p.FlexMultiplier},
+	} {
+		if modifier.value != nil && *modifier.value <= 0 {
+			return fmt.Errorf("%s must be > 0", modifier.name)
+		}
+	}
+	return nil
 }
 
 // PricingInterval 定价区间（token 区间 / 按次分层 / 图片分辨率分层）
@@ -181,6 +272,11 @@ func (p ChannelModelPricing) Clone() ChannelModelPricing {
 	if p.Intervals != nil {
 		cp.Intervals = make([]PricingInterval, len(p.Intervals))
 		copy(cp.Intervals, p.Intervals)
+	}
+	if p.TimePricing != nil {
+		cfg := *p.TimePricing
+		cfg.Periods = append([]TimePricingPeriod(nil), p.TimePricing.Periods...)
+		cp.TimePricing = &cfg
 	}
 	return cp
 }

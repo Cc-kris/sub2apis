@@ -199,6 +199,25 @@ func TestRegisterOAuthEmailAccountRollsBackCreatedUserWhenTokenPairGenerationFai
 	require.Empty(t, redeemRepo.updateCalls)
 }
 
+func TestRegisterOAuthEmailAccountPreservesDomainLimit429(t *testing.T) {
+	userRepo := &userRepoStub{domainCreateErr: ErrRegistrationDomainLimit}
+	emailCache := &emailCacheStub{data: &VerificationCodeData{Code: "246810", CreatedAt: time.Now().UTC(), ExpiresAt: time.Now().UTC().Add(time.Hour)}}
+	authService := newOAuthEmailFlowAuthService(userRepo, &redeemCodeRepoStub{}, &refreshTokenCacheStub{}, map[string]string{
+		SettingKeyRegistrationEnabled: "true", SettingKeyEmailVerifyEnabled: "true", SettingKeyRegistrationDomainLimitEnabled: "true", SettingKeyRegistrationDomainLimitPerDomain: "1",
+	}, emailCache, nil)
+	_, _, err := authService.RegisterOAuthEmailAccount(context.Background(), "fresh@example.com", "secret-123", "246810", "", "oidc")
+	require.ErrorIs(t, err, ErrRegistrationDomainLimit)
+}
+
+func TestRegisterVerifiedOAuthEmailAccountPreservesDomainLimit429(t *testing.T) {
+	userRepo := &userRepoStub{domainCreateErr: ErrRegistrationDomainLimit}
+	authService := newOAuthEmailFlowAuthService(userRepo, &redeemCodeRepoStub{}, &refreshTokenCacheStub{}, map[string]string{
+		SettingKeyRegistrationEnabled: "true", SettingKeyRegistrationDomainLimitEnabled: "true", SettingKeyRegistrationDomainLimitPerDomain: "1",
+	}, nil, nil)
+	_, _, err := authService.RegisterVerifiedOAuthEmailAccount(context.Background(), "fresh@example.com", "secret-123", "", "oidc")
+	require.ErrorIs(t, err, ErrRegistrationDomainLimit)
+}
+
 func TestRegisterOAuthEmailAccountSetsNormalizedSignupSourceOnCreatedUser(t *testing.T) {
 	userRepo := &userRepoStub{nextID: 42}
 	emailCache := &emailCacheStub{

@@ -26,6 +26,63 @@
         <p class="input-hint">{{ t('admin.accounts.notesHint') }}</p>
       </div>
 
+      <div
+        v-if="account.platform === 'openai' && teamWorkspaceStatus?.active"
+        class="rounded-lg border border-amber-200 bg-amber-50 p-4 text-sm dark:border-amber-800 dark:bg-amber-900/20"
+      >
+        <div class="flex items-center justify-between gap-3">
+          <p class="font-medium text-amber-800 dark:text-amber-200">{{ t('admin.accounts.teamWorkspace.title') }}</p>
+          <button
+            type="button"
+            :disabled="teamWorkspaceStatusLoading"
+            class="text-xs font-medium text-amber-800 underline disabled:cursor-not-allowed disabled:opacity-60 dark:text-amber-200"
+            @click="loadTeamWorkspaceStatus"
+          >
+            {{ teamWorkspaceStatusLoading ? t('admin.accounts.teamWorkspace.refreshing') : t('admin.accounts.teamWorkspace.refresh') }}
+          </button>
+        </div>
+        <p class="mt-2 text-xs text-amber-700 dark:text-amber-300">
+          {{ t('admin.accounts.teamWorkspace.affected', {
+            teamId: teamWorkspaceStatus.team_id,
+            accountIds: teamWorkspaceStatus.affected_account_ids?.join('、') || t('admin.accounts.teamWorkspace.none')
+          }) }}
+        </p>
+        <p v-if="teamWorkspaceStatus.block_until" class="mt-1 text-xs text-amber-700 dark:text-amber-300">
+          {{ t('admin.accounts.teamWorkspace.probeAt', { time: formatDateTime(teamWorkspaceStatus.block_until) }) }}
+        </p>
+        <p class="mt-1 text-xs text-amber-700 dark:text-amber-300">{{ t('admin.accounts.teamWorkspace.recoveryHint') }}</p>
+      </div>
+
+      <div
+        v-if="account?.platform === 'openai' && account?.type === 'oauth'"
+        class="border-t border-gray-200 pt-4 dark:border-dark-600"
+      >
+        <label class="input-label">{{ t('admin.accounts.openai.codexIdentityMode') }}</label>
+        <p class="input-hint">{{ t('admin.accounts.openai.codexIdentityModeDesc') }}</p>
+        <Select
+          v-model="codexIdentityMode"
+          :options="codexIdentityModeOptions"
+          data-testid="codex-identity-mode-select"
+        />
+      </div>
+
+      <div
+        v-if="account.platform === 'openai' && teamWorkspaceStatusError"
+        class="rounded-lg border border-red-200 bg-red-50 p-4 text-sm dark:border-red-800 dark:bg-red-900/20"
+      >
+        <div class="flex items-center justify-between gap-3">
+          <p class="text-red-700 dark:text-red-300">{{ t('admin.accounts.teamWorkspace.loadFailed') }}</p>
+          <button
+            type="button"
+            :disabled="teamWorkspaceStatusLoading"
+            class="text-xs font-medium text-red-700 underline disabled:cursor-not-allowed disabled:opacity-60 dark:text-red-300"
+            @click="loadTeamWorkspaceStatus"
+          >
+            {{ t('admin.accounts.teamWorkspace.retry') }}
+          </button>
+        </div>
+      </div>
+
       <!-- API Key fields (only for apikey type) -->
       <div v-if="account.type === 'apikey'" class="space-y-4">
         <div>
@@ -80,6 +137,20 @@
             "
           />
           <p class="input-hint">{{ t('admin.accounts.leaveEmptyToKeep') }}</p>
+        </div>
+
+        <div v-if="isDomesticOpenAICompatiblePlatform(account.platform)" class="space-y-3 rounded-lg bg-gray-50 p-4 dark:bg-dark-700/50">
+          <label class="input-label">协议模式</label>
+          <select v-model="apiProtocol" class="input">
+            <option value="adaptive">自适应（推荐）</option>
+            <option value="chat_completions">Chat Completions</option>
+            <option value="anthropic">Anthropic Messages</option>
+            <option value="responses">Responses</option>
+          </select>
+          <p class="input-hint">固定 Anthropic 使用对应 Messages 地址；DeepSeek Responses 使用对应地址；Kimi/智谱 Responses 经 Chat 地址受控桥接。</p>
+          <input v-model.trim="apiBaseUrls.chat_completions" type="url" class="input" placeholder="Chat Completions endpoint base URL" />
+          <input v-model.trim="apiBaseUrls.anthropic" type="url" class="input" placeholder="Anthropic Messages endpoint base URL" />
+          <input v-model.trim="apiBaseUrls.responses" type="url" class="input" placeholder="Responses endpoint base URL（仅 DeepSeek 原生使用）" />
         </div>
 
         <div v-if="account.platform === 'seedace'" class="rounded-lg bg-gray-50 p-4 dark:bg-dark-700/50">
@@ -2487,7 +2558,21 @@ interface TempUnschedRuleForm {
 // State
 const submitting = ref(false)
 const fetchingUpstreamModels = ref(false)
+interface TeamWorkspaceBlockStatus {
+  active: boolean
+  team_id?: string
+  state?: string
+  block_until?: string
+  affected_account_ids?: number[]
+}
+const teamWorkspaceStatus = ref<TeamWorkspaceBlockStatus | null>(null)
+const teamWorkspaceStatusLoading = ref(false)
+const teamWorkspaceStatusError = ref(false)
 const editBaseUrl = ref('https://api.anthropic.com')
+const apiProtocol = ref<'adaptive' | 'chat_completions' | 'anthropic' | 'responses'>('adaptive')
+const apiBaseUrls = reactive({ chat_completions: '', anthropic: '', responses: '' })
+const isDomesticOpenAICompatiblePlatform = (platform: string): boolean =>
+  platform === 'kimi' || platform === 'zhipu' || platform === 'deepseek'
 const editApiKey = ref('')
 // Bedrock credentials
 const editBedrockAccessKeyId = ref('')
@@ -2580,6 +2665,7 @@ const openAIStructuredOutputMode = ref<OpenAIStructuredOutputMode>('native')
 const openaiOAuthResponsesWebSocketV2Mode = ref<OpenAIWSMode>(OPENAI_WS_MODE_OFF)
 const openaiAPIKeyResponsesWebSocketV2Mode = ref<OpenAIWSMode>(OPENAI_WS_MODE_OFF)
 const codexCLIOnlyEnabled = ref(false)
+const codexIdentityMode = ref<'disabled' | 'device' | 'session' | 'full'>('disabled')
 const anthropicPassthroughEnabled = ref(false)
 const seedaceUrlRelayEnabled = ref(true)
 const webSearchEmulationMode = ref('default')
@@ -2612,6 +2698,12 @@ const openAIWSModeOptions = computed(() => [
   { value: OPENAI_WS_MODE_OFF, label: t('admin.accounts.openai.wsModeOff') },
   { value: OPENAI_WS_MODE_CTX_POOL, label: t('admin.accounts.openai.wsModeCtxPool') },
   { value: OPENAI_WS_MODE_PASSTHROUGH, label: t('admin.accounts.openai.wsModePassthrough') }
+])
+const codexIdentityModeOptions = computed(() => [
+  { value: 'disabled', label: t('admin.accounts.openai.codexIdentityModeDisabled') },
+  { value: 'device', label: t('admin.accounts.openai.codexIdentityModeDevice') },
+  { value: 'session', label: t('admin.accounts.openai.codexIdentityModeSession') },
+  { value: 'full', label: t('admin.accounts.openai.codexIdentityModeFull') }
 ])
 const openaiResponsesWebSocketV2Mode = computed({
   get: () => {
@@ -2892,6 +2984,7 @@ const syncFormFromAccount = (newAccount: Account | null) => {
   openaiOAuthResponsesWebSocketV2Mode.value = OPENAI_WS_MODE_OFF
   openaiAPIKeyResponsesWebSocketV2Mode.value = OPENAI_WS_MODE_OFF
   codexCLIOnlyEnabled.value = false
+  codexIdentityMode.value = 'disabled'
   anthropicPassthroughEnabled.value = false
   seedaceUrlRelayEnabled.value = extra?.url_relay_enabled !== false
   webSearchEmulationMode.value = 'default'
@@ -2916,6 +3009,10 @@ const syncFormFromAccount = (newAccount: Account | null) => {
     })
     if (newAccount.type === 'oauth') {
       codexCLIOnlyEnabled.value = extra?.codex_cli_only === true
+      const identityMode = extra?.codex_identity_mode
+      codexIdentityMode.value = identityMode === 'device' || identityMode === 'session' || identityMode === 'full'
+        ? identityMode
+        : 'disabled'
     }
     const credentials = newAccount.credentials as Record<string, unknown> | undefined
     const compactMappings = credentials?.compact_model_mapping as Record<string, string> | undefined
@@ -3015,6 +3112,11 @@ const syncFormFromAccount = (newAccount: Account | null) => {
             ? 'https://ai.silkroadai.io/v1'
           : 'https://api.anthropic.com'
     editBaseUrl.value = (credentials.base_url as string) || platformDefaultUrl
+    apiProtocol.value = (credentials.api_protocol as typeof apiProtocol.value) || 'adaptive'
+    const configuredBaseURLs = (credentials.api_base_urls as Record<string, unknown>) || {}
+    apiBaseUrls.chat_completions = String(configuredBaseURLs.chat_completions || editBaseUrl.value)
+    apiBaseUrls.anthropic = String(configuredBaseURLs.anthropic || editBaseUrl.value)
+    apiBaseUrls.responses = String(configuredBaseURLs.responses || '')
 
     // Load model mappings and detect mode
     loadModelRestrictionFromMapping(credentials.model_mapping as Record<string, unknown> | undefined)
@@ -3117,12 +3219,32 @@ watch(
       return
     }
     if (!wasShow || newAccount !== previousAccount) {
+      teamWorkspaceStatus.value = null
+      teamWorkspaceStatusError.value = false
       syncFormFromAccount(newAccount)
       loadTLSProfiles()
+      loadTeamWorkspaceStatus()
     }
   },
   { immediate: true }
 )
+
+async function loadTeamWorkspaceStatus() {
+  if (!props.show || props.account?.platform !== 'openai') {
+    teamWorkspaceStatus.value = null
+    teamWorkspaceStatusError.value = false
+    return
+  }
+  teamWorkspaceStatusLoading.value = true
+  teamWorkspaceStatusError.value = false
+  try {
+    teamWorkspaceStatus.value = await adminAPI.accounts.getTeamWorkspaceBlockStatus(props.account.id)
+  } catch {
+    teamWorkspaceStatusError.value = true
+  } finally {
+    teamWorkspaceStatusLoading.value = false
+  }
+}
 
 // Model mapping helpers
 const addModelMapping = () => {
@@ -3686,6 +3808,15 @@ const handleSubmit = async () => {
         ...currentCredentials,
         base_url: newBaseUrl
       }
+      if (isDomesticOpenAICompatiblePlatform(props.account.platform)) {
+        newCredentials.api_protocol = apiProtocol.value
+        const baseURLs: Record<string, string> = {
+          chat_completions: apiBaseUrls.chat_completions.trim() || newBaseUrl,
+          anthropic: apiBaseUrls.anthropic.trim() || newBaseUrl,
+        }
+        if (apiBaseUrls.responses.trim()) baseURLs.responses = apiBaseUrls.responses.trim()
+        newCredentials.api_base_urls = baseURLs
+      }
 
       // Handle API key
       // 后端响应已脱敏：currentCredentials 不会再包含 api_key 原文。
@@ -4130,6 +4261,15 @@ const handleSubmit = async () => {
       } else if (props.account.type === 'apikey') {
         newExtra.openai_apikey_responses_websockets_v2_mode = openaiAPIKeyResponsesWebSocketV2Mode.value
         newExtra.openai_apikey_responses_websockets_v2_enabled = isOpenAIWSModeEnabled(openaiAPIKeyResponsesWebSocketV2Mode.value)
+      }
+      if (props.account.type === 'oauth') {
+        if (codexIdentityMode.value === 'disabled') {
+          delete newExtra.codex_identity_mode
+        } else {
+          newExtra.codex_identity_mode = codexIdentityMode.value
+        }
+      } else {
+        delete newExtra.codex_identity_mode
       }
       delete newExtra.responses_websockets_v2_enabled
       delete newExtra.openai_ws_enabled

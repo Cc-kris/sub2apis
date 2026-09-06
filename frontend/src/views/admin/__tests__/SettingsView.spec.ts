@@ -432,6 +432,7 @@ const baseSettingsResponse = {
   subscription_expiry_notify_enabled: true,
   account_quota_notify_enabled: false,
   account_quota_notify_emails: [],
+  openai_team_linked_resolver_enabled: true,
   // 平台限额嵌套字段（新后端契约）
   default_platform_quotas: {
     anthropic:   { daily: null, weekly: null, monthly: null },
@@ -675,6 +676,99 @@ describe("admin SettingsView payment visible method controls", () => {
         model_square_enabled: true,
       }),
     );
+  });
+
+  it("loads and submits the Remote Compaction V2 rollback switch", async () => {
+    getSettings.mockResolvedValueOnce({
+      ...baseSettingsResponse,
+      openai_remote_compaction_v2_enabled: false,
+    });
+
+    const wrapper = mountView();
+
+    await flushPromises();
+    await wrapper.find("form").trigger("submit.prevent");
+    await flushPromises();
+
+    expect(updateSettings).toHaveBeenCalledWith(
+      expect.objectContaining({
+        openai_remote_compaction_v2_enabled: false,
+      }),
+    );
+  });
+
+  it("loads and submits the Group Usage Rollup rollback switch", async () => {
+    getSettings.mockResolvedValueOnce({
+      ...baseSettingsResponse,
+      group_usage_rollup_enabled: false,
+    });
+
+    const wrapper = mountView();
+
+    await flushPromises();
+    await wrapper.find("form").trigger("submit.prevent");
+    await flushPromises();
+
+    expect(updateSettings).toHaveBeenCalledWith(
+      expect.objectContaining({
+        group_usage_rollup_enabled: false,
+      }),
+    );
+  });
+
+  it("reloads the confirmed Group Usage Rollup value when a later save step fails", async () => {
+    getSettings
+      .mockResolvedValueOnce({
+        ...baseSettingsResponse,
+        group_usage_rollup_enabled: false,
+      })
+      .mockResolvedValueOnce({
+        ...baseSettingsResponse,
+        group_usage_rollup_enabled: true,
+      });
+    updateSettings.mockRejectedValueOnce(new Error("payment refresh failed"));
+    const wrapper = mountView();
+
+    await flushPromises();
+    const card = wrapper.findAll(".card").find((node) =>
+      node.text().includes("groupUsageRollup"),
+    );
+    expect(card).toBeDefined();
+    await card?.find(".toggle-stub").setValue(true);
+    await wrapper.find("form").trigger("submit.prevent");
+    await flushPromises();
+
+    expect(getSettings).toHaveBeenCalledTimes(2);
+    const refreshedCard = wrapper.findAll(".card").find((node) =>
+      node.text().includes("groupUsageRollup"),
+    );
+    expect(refreshedCard?.find<HTMLInputElement>(".toggle-stub").element.checked).toBe(true);
+  });
+
+  it("restores the prior Group Usage Rollup value when save and reload both fail", async () => {
+    getSettings
+      .mockResolvedValueOnce({
+        ...baseSettingsResponse,
+        group_usage_rollup_enabled: false,
+      })
+      .mockRejectedValueOnce(new Error("settings reload failed"));
+    updateSettings.mockRejectedValueOnce(new Error("payment refresh failed"));
+    const wrapper = mountView();
+
+    await flushPromises();
+    const card = wrapper.findAll(".card").find((node) =>
+      node.text().includes("groupUsageRollup"),
+    );
+    expect(card).toBeDefined();
+    await card?.find(".toggle-stub").setValue(true);
+    await wrapper.find("form").trigger("submit.prevent");
+    await flushPromises();
+
+    expect(getSettings).toHaveBeenCalledTimes(2);
+    const refreshedCard = wrapper.findAll(".card").find((node) =>
+      node.text().includes("groupUsageRollup"),
+    );
+    expect(refreshedCard?.find<HTMLInputElement>(".toggle-stub").element.checked).toBe(false);
   });
 
   it("submits message cache_control rewrite and local response cache gateway settings", async () => {
@@ -946,6 +1040,137 @@ describe("admin SettingsView payment visible method controls", () => {
     expect(paymentHelpImageUpload).toBeDefined();
     expect(paymentHelpImageUpload?.attributes("data-upload-label")).toBe("上传图片");
     expect(paymentHelpImageUpload?.attributes("data-remove-label")).toBe("移除");
+  });
+
+  it("requires a reason before changing the sales pricing resolver state", async () => {
+    getSettings.mockResolvedValueOnce({
+      ...baseSettingsResponse,
+      sales_pricing_resolver_enabled: false,
+    });
+
+    const wrapper = mountView();
+    await flushPromises();
+
+    expect(wrapper.get('[data-testid="sales-pricing-current-status"]').text()).toContain(
+      "admin.settings.features.salesPricingResolver.currentDisabled",
+    );
+    await wrapper.get('[data-testid="sales-pricing-resolver-toggle"]').setValue(true);
+    await wrapper.find("form").trigger("submit.prevent");
+    await flushPromises();
+
+    expect(updateSettings).not.toHaveBeenCalled();
+    expect(showError).toHaveBeenCalledWith(
+      "admin.settings.features.salesPricingResolver.reasonValidation",
+    );
+  });
+
+  it("does not submit sales pricing fields when the state is unchanged", async () => {
+    getSettings.mockResolvedValueOnce({
+      ...baseSettingsResponse,
+      sales_pricing_resolver_enabled: false,
+    });
+
+    const wrapper = mountView();
+    await flushPromises();
+
+    await wrapper.find("form").trigger("submit.prevent");
+    await flushPromises();
+
+    const payload = updateSettings.mock.calls.at(-1)?.[0];
+    expect(payload).not.toHaveProperty("sales_pricing_resolver_enabled");
+    expect(payload).not.toHaveProperty("sales_pricing_change_reason");
+  });
+
+  it("submits the trimmed reason when sales pricing state changes", async () => {
+    getSettings.mockResolvedValueOnce({
+      ...baseSettingsResponse,
+      sales_pricing_resolver_enabled: false,
+    });
+
+    const wrapper = mountView();
+    await flushPromises();
+
+    await wrapper.get('[data-testid="sales-pricing-resolver-toggle"]').setValue(true);
+    await wrapper.get('[data-testid="sales-pricing-change-reason"]').setValue(
+      "  恢复销售价格解析链路  ",
+    );
+    await wrapper.find("form").trigger("submit.prevent");
+    await flushPromises();
+
+    expect(updateSettings).toHaveBeenCalledWith(
+      expect.objectContaining({
+        sales_pricing_resolver_enabled: true,
+        sales_pricing_change_reason: "恢复销售价格解析链路",
+      }),
+    );
+  });
+
+  it("keeps the attempted sales pricing state and reason after a save failure", async () => {
+    getSettings.mockResolvedValue({
+      ...baseSettingsResponse,
+      sales_pricing_resolver_enabled: false,
+    });
+    updateSettings.mockRejectedValueOnce(new Error("save failed"));
+
+    const wrapper = mountView();
+    await flushPromises();
+
+    const toggle = wrapper.get('[data-testid="sales-pricing-resolver-toggle"]');
+    const reason = wrapper.get('[data-testid="sales-pricing-change-reason"]');
+    await toggle.setValue(true);
+    await reason.setValue("紧急恢复销售价格解析");
+    await wrapper.find("form").trigger("submit.prevent");
+    await flushPromises();
+
+    expect((toggle.element as HTMLInputElement).checked).toBe(true);
+    expect((reason.element as HTMLTextAreaElement).value).toBe("紧急恢复销售价格解析");
+    expect(showError).toHaveBeenCalledWith("error");
+  });
+
+  it("requires a reason before changing the OpenAI Team resolver state", async () => {
+    getSettings.mockResolvedValueOnce({
+      ...baseSettingsResponse,
+      openai_team_linked_resolver_enabled: false,
+    });
+
+    const wrapper = mountView();
+    await flushPromises();
+
+    expect(wrapper.get('[data-testid="openai-team-linked-current-status"]').text()).toContain(
+      "admin.settings.features.openaiTeamLinkedResolver.currentDisabled",
+    );
+    await wrapper.get('[data-testid="openai-team-linked-resolver-toggle"]').setValue(true);
+    await wrapper.find("form").trigger("submit.prevent");
+    await flushPromises();
+
+    expect(updateSettings).not.toHaveBeenCalled();
+    expect(showError).toHaveBeenCalledWith(
+      "admin.settings.features.openaiTeamLinkedResolver.reasonValidation",
+    );
+  });
+
+  it("submits the trimmed reason when the OpenAI Team resolver state changes", async () => {
+    getSettings.mockResolvedValueOnce({
+      ...baseSettingsResponse,
+      openai_team_linked_resolver_enabled: false,
+    });
+
+    const wrapper = mountView();
+    await flushPromises();
+
+    await wrapper.get('[data-testid="openai-team-linked-resolver-toggle"]').setValue(true);
+    await wrapper.get('[data-testid="openai-team-linked-change-reason"]').setValue(
+      "  恢复 Team 联动  ",
+    );
+    await wrapper.find("form").trigger("submit.prevent");
+    await flushPromises();
+
+    expect(updateSettings).toHaveBeenCalledWith(
+      expect.objectContaining({
+        openai_team_linked_resolver_enabled: true,
+        openai_team_linked_change_reason: "恢复 Team 联动",
+      }),
+    );
   });
 });
 

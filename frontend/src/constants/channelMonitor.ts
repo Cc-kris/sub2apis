@@ -13,6 +13,10 @@ export const PROVIDER_OPENAI: Provider = 'openai'
 export const PROVIDER_ANTHROPIC: Provider = 'anthropic'
 export const PROVIDER_GEMINI: Provider = 'gemini'
 export const PROVIDER_GROK: Provider = 'grok'
+export const PROVIDER_ANTIGRAVITY: Provider = 'antigravity'
+export const PROVIDER_KIMI: Provider = 'kimi'
+export const PROVIDER_ZHIPU: Provider = 'zhipu'
+export const PROVIDER_DEEPSEEK: Provider = 'deepseek'
 
 export const DEFAULT_GROK_ENDPOINT = 'https://api.x.ai'
 export const DEFAULT_GROK_MODEL = 'grok-4.5'
@@ -25,6 +29,10 @@ export const PROVIDERS: readonly Provider[] = [
   PROVIDER_ANTHROPIC,
   PROVIDER_GEMINI,
   PROVIDER_GROK,
+  PROVIDER_ANTIGRAVITY,
+  PROVIDER_KIMI,
+  PROVIDER_ZHIPU,
+  PROVIDER_DEEPSEEK,
 ]
 
 export const API_MODES: readonly APIMode[] = [

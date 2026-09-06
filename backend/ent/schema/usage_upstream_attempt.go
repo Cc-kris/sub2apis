@@ -33,6 +33,7 @@ func (UsageUpstreamAttempt) Fields() []ent.Field {
 		field.Int64("input_tokens").NonNegative().Default(0),
 		field.Int64("output_tokens").NonNegative().Default(0),
 		field.Int64("cache_read_tokens").NonNegative().Default(0),
+		field.Int64("cache_creation_tokens").NonNegative().Default(0),
 		field.Int64("cache_creation_5m_tokens").NonNegative().Default(0),
 		field.Int64("cache_creation_1h_tokens").NonNegative().Default(0),
 		field.Int64("request_count").NonNegative().Default(0),

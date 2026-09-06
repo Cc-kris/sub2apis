@@ -3,6 +3,7 @@ package service
 import (
 	"encoding/json"
 	"fmt"
+	"golang.org/x/net/publicsuffix"
 	"regexp"
 	"strings"
 )
@@ -18,6 +19,20 @@ func RegistrationEmailSuffix(email string) string {
 		return ""
 	}
 	return "@" + domain
+}
+
+// RegistrationEmailDomain extracts a normalized bare domain for quota checks.
+func RegistrationEmailDomain(email string) string {
+	_, domain, ok := splitEmailForPolicy(email)
+	if !ok {
+		return ""
+	}
+	domain = strings.TrimSuffix(domain, ".")
+	registrable, err := publicsuffix.EffectiveTLDPlusOne(domain)
+	if err == nil {
+		return registrable
+	}
+	return domain
 }
 
 // IsRegistrationEmailSuffixAllowed checks whether an email is allowed by suffix whitelist.

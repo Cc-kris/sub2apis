@@ -682,12 +682,25 @@ func parseUsageAndAccumulate(
 
 	inputResult := gjson.GetBytes(message, "response.usage.input_tokens")
 	outputResult := gjson.GetBytes(message, "response.usage.output_tokens")
-	cachedResult := gjson.GetBytes(message, "response.usage.input_tokens_details.cached_tokens")
+	cachedResult := firstUsageResult(message,
+		"response.usage.input_tokens_details.cached_tokens",
+		"response.usage.prompt_tokens_details.cached_tokens",
+		"response.usage.cache_read_input_tokens",
+		"response.usage.cache_read_tokens",
+	)
+	cacheCreationResult := firstUsageResult(message,
+		"response.usage.cache_creation_input_tokens",
+		"response.usage.cache_creation_tokens",
+		"response.usage.cache_write_tokens",
+		"response.usage.input_tokens_details.cache_write_tokens",
+		"response.usage.prompt_tokens_details.cache_write_tokens",
+	)
 
 	inputTokens, inputOK := parseUsageIntField(inputResult, true)
 	outputTokens, outputOK := parseUsageIntField(outputResult, true)
 	cachedTokens, cachedOK := parseUsageIntField(cachedResult, false)
-	if !inputOK || !outputOK || !cachedOK {
+	cacheCreationTokens, cacheCreationOK := parseUsageIntField(cacheCreationResult, false)
+	if !inputOK || !outputOK || !cachedOK || !cacheCreationOK {
 		recordUsageParseFailure()
 		if onParseFailure != nil {
 			onParseFailure(eventType, usageRaw)
@@ -696,15 +709,27 @@ func parseUsageAndAccumulate(
 		return Usage{}
 	}
 	parsedUsage := Usage{
-		InputTokens:          inputTokens,
-		OutputTokens:         outputTokens,
-		CacheReadInputTokens: cachedTokens,
+		InputTokens:              inputTokens,
+		OutputTokens:             outputTokens,
+		CacheCreationInputTokens: cacheCreationTokens,
+		CacheReadInputTokens:     cachedTokens,
 	}
 
 	state.usage.InputTokens += parsedUsage.InputTokens
 	state.usage.OutputTokens += parsedUsage.OutputTokens
+	state.usage.CacheCreationInputTokens += parsedUsage.CacheCreationInputTokens
 	state.usage.CacheReadInputTokens += parsedUsage.CacheReadInputTokens
 	return parsedUsage
+}
+
+func firstUsageResult(message []byte, paths ...string) gjson.Result {
+	for _, path := range paths {
+		result := gjson.GetBytes(message, path)
+		if result.Exists() {
+			return result
+		}
+	}
+	return gjson.Result{}
 }
 
 func parseUsageIntField(value gjson.Result, required bool) (int, bool) {

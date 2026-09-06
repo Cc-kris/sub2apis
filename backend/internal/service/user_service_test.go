@@ -90,6 +90,9 @@ func (m *mockUserSettingRepo) Delete(context.Context, string) error {
 }
 
 func (m *mockUserRepo) Create(context.Context, *User) error { return nil }
+func (m *mockUserRepo) CountByEmailDomain(context.Context, string) (int, error) {
+	return 0, nil
+}
 func (m *mockUserRepo) GetByID(ctx context.Context, _ int64) (*User, error) {
 	if m.getByIDErr != nil {
 		return nil, m.getByIDErr

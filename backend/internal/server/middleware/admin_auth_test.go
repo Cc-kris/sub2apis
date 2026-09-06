@@ -471,6 +471,10 @@ func (s *stubUserRepo) GetByEmail(ctx context.Context, email string) (*service.U
 	panic("unexpected GetByEmail call")
 }
 
+func (s *stubUserRepo) CountByEmailDomain(ctx context.Context, domain string) (int, error) {
+	panic("unexpected CountByEmailDomain call")
+}
+
 func (s *stubUserRepo) GetFirstAdmin(ctx context.Context) (*service.User, error) {
 	panic("unexpected GetFirstAdmin call")
 }

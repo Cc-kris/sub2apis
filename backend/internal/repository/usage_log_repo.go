@@ -405,7 +405,7 @@ func insertUsageUpstreamAttempts(ctx context.Context, sqlq sqlExecutor, log *ser
 		INSERT INTO usage_upstream_attempts (
 			usage_log_id, request_id, attempt_no, account_id, channel_id,
 			upstream_model, service_tier, input_tokens, output_tokens,
-			cache_read_tokens, cache_creation_5m_tokens, cache_creation_1h_tokens,
+			cache_read_tokens, cache_creation_tokens, cache_creation_5m_tokens, cache_creation_1h_tokens,
 			request_count, image_count, video_seconds, upstream_cost_multiplier,
 			upstream_multiplier_change_id, upstream_multiplier_source,
 			upstream_multiplier_effective_at, account_finance_profile_id,
@@ -416,7 +416,7 @@ func insertUsageUpstreamAttempts(ctx context.Context, sqlq sqlExecutor, log *ser
 			$1, $2, $3, $4, $5, $6, $7, $8, $9,
 			$10, $11, $12, $13, $14, $15, $16, $17, $18,
 			$19, $20, $21, $22, $23, $24, $25, $26, $27,
-			$28, $29::jsonb, $30, $31
+			$28, $29, $30::jsonb, $31, $32
 		)
 		ON CONFLICT (usage_log_id, attempt_no) DO NOTHING
 	`
@@ -442,7 +442,7 @@ func insertUsageUpstreamAttempts(ctx context.Context, sqlq sqlExecutor, log *ser
 		if _, err := sqlq.ExecContext(ctx, query,
 			attempt.UsageLogID, attempt.RequestID, attempt.AttemptNo, attempt.AccountID, attempt.ChannelID,
 			attempt.UpstreamModel, attempt.ServiceTier, attempt.InputTokens, attempt.OutputTokens,
-			attempt.CacheReadTokens, attempt.CacheCreation5mTokens, attempt.CacheCreation1hTokens,
+			attempt.CacheReadTokens, attempt.CacheCreationTokens, attempt.CacheCreation5mTokens, attempt.CacheCreation1hTokens,
 			attempt.RequestCount, attempt.ImageCount, attempt.VideoSeconds, attempt.UpstreamCostMultiplier,
 			attempt.UpstreamMultiplierChangeID, nullString(&attempt.UpstreamMultiplierSource),
 			attempt.UpstreamMultiplierEffectiveAt, attempt.AccountFinanceProfileID,
@@ -2890,12 +2890,23 @@ func (r *usageLogRepository) GetUserUsageTrend(ctx context.Context, startTime, e
 }
 
 // GetUserSpendingRanking returns user spending ranking aggregated within the time range.
-func (r *usageLogRepository) GetUserSpendingRanking(ctx context.Context, startTime, endTime time.Time, limit int) (result *UserSpendingRankingResponse, err error) {
+func (r *usageLogRepository) GetUserSpendingRanking(ctx context.Context, startTime, endTime time.Time, limit int, userIDs ...int64) (result *UserSpendingRankingResponse, err error) {
 	if limit <= 0 {
 		limit = 12
 	}
 
-	query := `
+	userFilter := ""
+	args := []any{startTime, endTime}
+	if len(userIDs) > 0 && userIDs[0] > 0 {
+		userFilter = " AND u.user_id = $3"
+		args = append(args, userIDs[0])
+	}
+	limitPlaceholder := "$3"
+	if userFilter != "" {
+		limitPlaceholder = "$4"
+	}
+	args = append(args, limit)
+	query := fmt.Sprintf(`
 		WITH user_spend AS (
 			SELECT
 				u.user_id,
@@ -2905,7 +2916,7 @@ func (r *usageLogRepository) GetUserSpendingRanking(ctx context.Context, startTi
 				COALESCE(SUM(u.input_tokens + u.output_tokens + u.cache_creation_tokens + u.cache_read_tokens), 0) as tokens
 			FROM usage_logs u
 			LEFT JOIN users us ON u.user_id = us.id
-			WHERE u.created_at >= $1 AND u.created_at < $2
+			WHERE u.created_at >= $1 AND u.created_at < $2%s
 			GROUP BY u.user_id, us.email
 		),
 		ranked AS (
@@ -2919,8 +2930,8 @@ func (r *usageLogRepository) GetUserSpendingRanking(ctx context.Context, startTi
 				COALESCE(SUM(requests) OVER (), 0) as total_requests,
 				COALESCE(SUM(tokens) OVER (), 0) as total_tokens
 			FROM user_spend
-			ORDER BY actual_cost DESC, tokens DESC, user_id ASC
-			LIMIT $3
+			ORDER BY tokens DESC, actual_cost DESC, user_id ASC
+			LIMIT %s
 		)
 		SELECT
 			user_id,
@@ -2932,10 +2943,10 @@ func (r *usageLogRepository) GetUserSpendingRanking(ctx context.Context, startTi
 			total_requests,
 			total_tokens
 		FROM ranked
-		ORDER BY actual_cost DESC, tokens DESC, user_id ASC
-	`
+		ORDER BY tokens DESC, actual_cost DESC, user_id ASC
+	`, userFilter, limitPlaceholder)
 
-	rows, err := r.sql.QueryContext(ctx, query, startTime, endTime, limit)
+	rows, err := r.sql.QueryContext(ctx, query, args...)
 	if err != nil {
 		return nil, err
 	}

@@ -360,6 +360,8 @@ export interface SystemSettings {
   registration_enabled: boolean;
   email_verify_enabled: boolean;
   registration_email_suffix_whitelist: string[];
+  registration_domain_limit_enabled: boolean;
+  registration_domain_limit_per_domain: number;
   promo_code_enabled: boolean;
   password_reset_enabled: boolean;
   frontend_url: string;
@@ -614,6 +616,10 @@ export interface SystemSettings {
   // Available Channels feature switch
   available_channels_enabled: boolean;
   model_square_enabled: boolean;
+  openai_remote_compaction_v2_enabled: boolean;
+  group_usage_rollup_enabled: boolean;
+  sales_pricing_resolver_enabled: boolean;
+  openai_team_linked_resolver_enabled: boolean;
 
   // Affiliate (邀请返利) feature switch
   affiliate_enabled: boolean;
@@ -643,6 +649,8 @@ export interface UpdateSettingsRequest {
   registration_enabled?: boolean;
   email_verify_enabled?: boolean;
   registration_email_suffix_whitelist?: string[];
+  registration_domain_limit_enabled?: boolean;
+  registration_domain_limit_per_domain?: number;
   promo_code_enabled?: boolean;
   password_reset_enabled?: boolean;
   frontend_url?: string;
@@ -869,6 +877,12 @@ export interface UpdateSettingsRequest {
   // Available Channels feature switch
   available_channels_enabled?: boolean;
   model_square_enabled?: boolean;
+  openai_remote_compaction_v2_enabled?: boolean;
+  group_usage_rollup_enabled?: boolean;
+  sales_pricing_resolver_enabled?: boolean;
+  sales_pricing_change_reason?: string;
+  openai_team_linked_resolver_enabled?: boolean;
+  openai_team_linked_change_reason?: string;
 
   // Affiliate (邀请返利) feature switch
   affiliate_enabled?: boolean;
@@ -1365,6 +1379,22 @@ export async function resetWebSearchUsage(payload: {
   );
 }
 
+export interface XSearchPriceResponse {
+  price_per_request: string
+}
+
+export async function getXSearchPrice(): Promise<XSearchPriceResponse> {
+  const { data } = await apiClient.get<XSearchPriceResponse>("/admin/settings/x-search-price")
+  return data
+}
+
+export async function updateXSearchPrice(pricePerRequest: string): Promise<XSearchPriceResponse> {
+  const { data } = await apiClient.put<XSearchPriceResponse>("/admin/settings/x-search-price", {
+    price_per_request: pricePerRequest,
+  })
+  return data
+}
+
 export const settingsAPI = {
   getSettings,
   updateSettings,
@@ -1393,6 +1423,8 @@ export const settingsAPI = {
   updateWebSearchEmulationConfig,
   testWebSearchEmulation,
   resetWebSearchUsage,
+  getXSearchPrice,
+  updateXSearchPrice,
 };
 
 export default settingsAPI;

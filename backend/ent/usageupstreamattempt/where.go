@@ -105,6 +105,11 @@ func CacheReadTokens(v int64) predicate.UsageUpstreamAttempt {
 	return predicate.UsageUpstreamAttempt(sql.FieldEQ(FieldCacheReadTokens, v))
 }
 
+// CacheCreationTokens applies equality check predicate on the "cache_creation_tokens" field. It's identical to CacheCreationTokensEQ.
+func CacheCreationTokens(v int64) predicate.UsageUpstreamAttempt {
+	return predicate.UsageUpstreamAttempt(sql.FieldEQ(FieldCacheCreationTokens, v))
+}
+
 // CacheCreation5mTokens applies equality check predicate on the "cache_creation_5m_tokens" field. It's identical to CacheCreation5mTokensEQ.
 func CacheCreation5mTokens(v int64) predicate.UsageUpstreamAttempt {
 	return predicate.UsageUpstreamAttempt(sql.FieldEQ(FieldCacheCreation5mTokens, v))
@@ -698,6 +703,46 @@ func CacheReadTokensLT(v int64) predicate.UsageUpstreamAttempt {
 // CacheReadTokensLTE applies the LTE predicate on the "cache_read_tokens" field.
 func CacheReadTokensLTE(v int64) predicate.UsageUpstreamAttempt {
 	return predicate.UsageUpstreamAttempt(sql.FieldLTE(FieldCacheReadTokens, v))
+}
+
+// CacheCreationTokensEQ applies the EQ predicate on the "cache_creation_tokens" field.
+func CacheCreationTokensEQ(v int64) predicate.UsageUpstreamAttempt {
+	return predicate.UsageUpstreamAttempt(sql.FieldEQ(FieldCacheCreationTokens, v))
+}
+
+// CacheCreationTokensNEQ applies the NEQ predicate on the "cache_creation_tokens" field.
+func CacheCreationTokensNEQ(v int64) predicate.UsageUpstreamAttempt {
+	return predicate.UsageUpstreamAttempt(sql.FieldNEQ(FieldCacheCreationTokens, v))
+}
+
+// CacheCreationTokensIn applies the In predicate on the "cache_creation_tokens" field.
+func CacheCreationTokensIn(vs ...int64) predicate.UsageUpstreamAttempt {
+	return predicate.UsageUpstreamAttempt(sql.FieldIn(FieldCacheCreationTokens, vs...))
+}
+
+// CacheCreationTokensNotIn applies the NotIn predicate on the "cache_creation_tokens" field.
+func CacheCreationTokensNotIn(vs ...int64) predicate.UsageUpstreamAttempt {
+	return predicate.UsageUpstreamAttempt(sql.FieldNotIn(FieldCacheCreationTokens, vs...))
+}
+
+// CacheCreationTokensGT applies the GT predicate on the "cache_creation_tokens" field.
+func CacheCreationTokensGT(v int64) predicate.UsageUpstreamAttempt {
+	return predicate.UsageUpstreamAttempt(sql.FieldGT(FieldCacheCreationTokens, v))
+}
+
+// CacheCreationTokensGTE applies the GTE predicate on the "cache_creation_tokens" field.
+func CacheCreationTokensGTE(v int64) predicate.UsageUpstreamAttempt {
+	return predicate.UsageUpstreamAttempt(sql.FieldGTE(FieldCacheCreationTokens, v))
+}
+
+// CacheCreationTokensLT applies the LT predicate on the "cache_creation_tokens" field.
+func CacheCreationTokensLT(v int64) predicate.UsageUpstreamAttempt {
+	return predicate.UsageUpstreamAttempt(sql.FieldLT(FieldCacheCreationTokens, v))
+}
+
+// CacheCreationTokensLTE applies the LTE predicate on the "cache_creation_tokens" field.
+func CacheCreationTokensLTE(v int64) predicate.UsageUpstreamAttempt {
+	return predicate.UsageUpstreamAttempt(sql.FieldLTE(FieldCacheCreationTokens, v))
 }
 
 // CacheCreation5mTokensEQ applies the EQ predicate on the "cache_creation_5m_tokens" field.

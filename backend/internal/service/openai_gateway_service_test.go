@@ -305,6 +305,47 @@ func TestOpenAIGatewayService_GenerateSessionHash_ContentFallback(t *testing.T) 
 	require.NotEqual(t, hash, hashDifferent, "different content should produce different hash")
 }
 
+func TestOpenAIGatewayService_GenerateHTTPResponsesSessionHash_StablePrefixAffinity(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	svc := &OpenAIGatewayService{}
+	newContext := func(apiKeyID int64, body []byte) *gin.Context {
+		rec := httptest.NewRecorder()
+		c, _ := gin.CreateTestContext(rec)
+		c.Request = httptest.NewRequest(http.MethodPost, "/openai/v1/responses", nil)
+		c.Set("api_key", &APIKey{ID: apiKeyID})
+		return c
+	}
+
+	bodyTurnOne := []byte(`{"model":"gpt-5.6-sol","instructions":"Work inside this repository.","tools":[{"type":"function","name":"shell"}],"input":[{"role":"user","content":"inspect the codebase"}]}`)
+	bodyTurnTwo := []byte(`{"model":"gpt-5.6-sol","instructions":"Work inside this repository.","tools":[{"name":"shell","type":"function"}],"input":[{"role":"user","content":"now modify the handler"}]}`)
+
+	first := svc.GenerateHTTPResponsesSessionHash(newContext(41, bodyTurnOne), bodyTurnOne)
+	second := svc.GenerateHTTPResponsesSessionHash(newContext(41, bodyTurnTwo), bodyTurnTwo)
+	require.NotEmpty(t, first)
+	require.Equal(t, first, second, "later user turns must retain HTTP cache affinity")
+
+	differentKey := svc.GenerateHTTPResponsesSessionHash(newContext(42, bodyTurnTwo), bodyTurnTwo)
+	require.NotEqual(t, first, differentKey, "different API keys must not share HTTP cache affinity")
+
+	differentModel := []byte(`{"model":"gpt-5.6-terra","instructions":"Work inside this repository.","tools":[{"type":"function","name":"shell"}],"input":[{"role":"user","content":"now modify the handler"}]}`)
+	differentModelHash := svc.GenerateHTTPResponsesSessionHash(newContext(41, differentModel), differentModel)
+	require.NotEqual(t, first, differentModelHash, "different model families must keep separate cache affinity")
+}
+
+func TestOpenAIGatewayService_GenerateHTTPResponsesSessionHash_ExplicitSessionWins(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	rec := httptest.NewRecorder()
+	c, _ := gin.CreateTestContext(rec)
+	c.Request = httptest.NewRequest(http.MethodPost, "/openai/v1/responses", nil)
+	c.Request.Header.Set("session_id", "client-session")
+	c.Set("api_key", &APIKey{ID: 41})
+	body := []byte(`{"model":"gpt-5.6-sol","instructions":"stable","input":"different user content"}`)
+
+	got := (&OpenAIGatewayService{}).GenerateHTTPResponsesSessionHash(c, body)
+	want := fmt.Sprintf("%016x", xxhash.Sum64String("client-session"))
+	require.Equal(t, want, got)
+}
+
 func TestOpenAIGatewayService_GenerateSessionHash_ExplicitSignalWinsOverContent(t *testing.T) {
 	gin.SetMode(gin.TestMode)
 	rec := httptest.NewRecorder()
@@ -1809,7 +1850,7 @@ func TestForwardRoutesNativeGrokAPIKeyToXAIResponses(t *testing.T) {
 		Body: io.NopCloser(strings.NewReader(strings.Join([]string{
 			`data: {"type":"response.output_text.delta","sequence_number":0,"delta":"ok"}`,
 			"",
-			`data: {"type":"response.completed","sequence_number":1,"response":{"id":"resp_grok_api_key","model":"grok-4.5","usage":{"input_tokens":2,"output_tokens":1}}}`,
+			`data: {"type":"response.completed","sequence_number":1,"response":{"id":"resp_grok_api_key","model":"grok-4.6","usage":{"input_tokens":2,"output_tokens":1}}}`,
 			"",
 		}, "\n"))),
 	}}
@@ -1819,7 +1860,7 @@ func TestForwardRoutesNativeGrokAPIKeyToXAIResponses(t *testing.T) {
 	require.NoError(t, err)
 	require.Equal(t, "https://api.x.ai/v1/responses", upstream.lastReq.URL.String())
 	require.Equal(t, "Bearer xai-test-key", upstream.lastReq.Header.Get("Authorization"))
-	require.Equal(t, "grok-4.5", gjson.GetBytes(upstream.lastBody, "model").String())
+	require.Equal(t, "grok-4.6", gjson.GetBytes(upstream.lastBody, "model").String())
 	require.Equal(t, "resp_grok_api_key", result.ResponseID)
 }
 

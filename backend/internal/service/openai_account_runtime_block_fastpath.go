@@ -2,6 +2,7 @@ package service
 
 import (
 	"context"
+	"log/slog"
 	"net/http"
 	"strings"
 	"time"
@@ -14,6 +15,7 @@ const (
 	openAIOAuth429StormWindow             = 10 * time.Second
 	openAIOAuth429StormThreshold          = 20
 	openAIOAuth429StormMaxAccountSwitches = 1
+	openAITeamRuntimeBlockRecheckInterval = 30 * time.Second
 )
 
 func openAIAccountStateContext(ctx context.Context) (context.Context, context.CancelFunc) {
@@ -53,7 +55,24 @@ func (s *OpenAIGatewayService) handleOpenAIAccountUpstreamError(ctx context.Cont
 	}
 	shouldDisable := s.rateLimitService.HandleUpstreamError(stateCtx, account, statusCode, headers, responseBody)
 	if shouldDisable {
-		s.BlockAccountScheduling(account, time.Time{}, "upstream_disable")
+		if (s.rateLimitService.settingService == nil || s.rateLimitService.settingService.IsOpenAITeamLinkedResolverEnabled(stateCtx)) && account.Platform == PlatformOpenAI && IsOpenAITeamWorkspaceDeactivated(statusCode, responseBody) && strings.TrimSpace(account.GetChatGPTAccountID()) != "" {
+			teamID := account.GetChatGPTAccountID()
+			active, err := s.rateLimitService.HasActiveOpenAITeamBlockForTeam(stateCtx, teamID)
+			if err != nil {
+				slog.Error("openai_team_workspace_durable_state_check_failed", "account_id", account.ID, "team_id", teamID, "error", err)
+				s.BlockAccountScheduling(account, time.Now().Add(openAITeamRuntimeBlockRecheckInterval), "team_workspace_persistence_failed")
+			} else if active {
+				until := time.Now().Add(openAITeamBlockTTL)
+				s.BlockOpenAITeamScheduling(teamID, until)
+				s.BlockAccountScheduling(account, until, "team_workspace_deactivated")
+			} else {
+				// A duplicate response ID can point at an already-cleared event.
+				// Do not recreate an unbounded Team cache entry from stale evidence.
+				s.BlockAccountScheduling(account, time.Now().Add(openAITeamRuntimeBlockRecheckInterval), "team_workspace_stale_duplicate")
+			}
+		} else {
+			s.BlockAccountScheduling(account, time.Time{}, "upstream_disable")
+		}
 	}
 	return shouldDisable
 }
@@ -126,6 +145,9 @@ func (s *OpenAIGatewayService) isOpenAIAccountRuntimeBlocked(account *Account) b
 	if s == nil || !isOpenAIAccount(account) {
 		return false
 	}
+	if s.isOpenAITeamRuntimeBlocked(account) {
+		return true
+	}
 	mu := s.openAIAccountRuntimeBlockLock(account.ID)
 	mu.Lock()
 	defer mu.Unlock()
@@ -145,6 +167,70 @@ func (s *OpenAIGatewayService) isOpenAIAccountRuntimeBlocked(account *Account) b
 	s.openaiAccountRuntimeBlockUntil.Delete(account.ID)
 	s.openaiAccountRuntimeBlockGeneration.Store(account.ID, s.openaiAccountRuntimeBlockSequence.Add(1))
 	return false
+}
+
+// BlockOpenAITeamScheduling immediately protects all local scheduler
+// snapshots while the database transaction and outbox propagate cross-instance.
+func (s *OpenAIGatewayService) BlockOpenAITeamScheduling(teamID string, until time.Time) {
+	if s == nil || strings.TrimSpace(teamID) == "" || until.IsZero() {
+		return
+	}
+	teamID = strings.TrimSpace(teamID)
+	recheckAt := time.Now().Add(openAITeamRuntimeBlockRecheckInterval)
+	if current, ok := s.openaiTeamRuntimeBlockUntil.Load(teamID); ok {
+		if currentUntil, ok := current.(time.Time); ok && currentUntil.After(recheckAt) {
+			return
+		}
+	}
+	s.openaiTeamRuntimeBlockUntil.Store(teamID, recheckAt)
+}
+
+// ClearOpenAITeamScheduling removes a durable Team block that has just passed
+// a successful probe. The durable transaction is the source of truth; this
+// only releases the local fast-path cache after that transaction committed.
+func (s *OpenAIGatewayService) ClearOpenAITeamScheduling(teamID string) {
+	if s == nil || strings.TrimSpace(teamID) == "" {
+		return
+	}
+	s.openaiTeamRuntimeBlockUntil.Delete(strings.TrimSpace(teamID))
+}
+
+func (s *OpenAIGatewayService) isOpenAITeamRuntimeBlocked(account *Account) bool {
+	if s == nil || account == nil {
+		return false
+	}
+	teamID := strings.TrimSpace(account.GetChatGPTAccountID())
+	if teamID == "" {
+		return false
+	}
+	value, ok := s.openaiTeamRuntimeBlockUntil.Load(teamID)
+	if !ok {
+		return false
+	}
+	nextCheckAt, ok := value.(time.Time)
+	if !ok {
+		return true
+	}
+	if time.Now().Before(nextCheckAt) {
+		return true
+	}
+	if s.rateLimitService == nil {
+		return true
+	}
+	checkCtx, cancel := context.WithTimeout(context.Background(), openAIAccountStateUpdateTimeout)
+	defer cancel()
+	active, err := s.rateLimitService.HasActiveOpenAITeamBlockForTeam(checkCtx, teamID)
+	if err != nil {
+		slog.Warn("openai_team_runtime_block_recheck_failed", "team_id", teamID, "error", err)
+		s.openaiTeamRuntimeBlockUntil.Store(teamID, time.Now().Add(openAITeamRuntimeBlockRecheckInterval))
+		return true
+	}
+	if !active {
+		s.openaiTeamRuntimeBlockUntil.Delete(teamID)
+		return false
+	}
+	s.openaiTeamRuntimeBlockUntil.Store(teamID, time.Now().Add(openAITeamRuntimeBlockRecheckInterval))
+	return true
 }
 
 func (s *OpenAIGatewayService) recordOpenAIOAuth429() {

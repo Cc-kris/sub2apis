@@ -463,7 +463,15 @@ WITH detail_base AS (
  LEFT JOIN upstreams up ON up.id=ufr.upstream_id
  LEFT JOIN LATERAL (
    SELECT COUNT(*)::bigint AS segment_count,
-          COALESCE(SUM(COALESCE((usage_detail->>'cache_read_tokens')::bigint,0)+COALESCE((usage_detail->>'cache_creation_5m_tokens')::bigint,0)+COALESCE((usage_detail->>'cache_creation_1h_tokens')::bigint,0)),0)::bigint AS cache_tokens
+          COALESCE(SUM(
+			COALESCE((usage_detail->>'cache_read_tokens')::bigint,0) +
+			CASE
+				WHEN COALESCE((usage_detail->>'cache_creation_5m_tokens')::bigint,0) > 0
+				  OR COALESCE((usage_detail->>'cache_creation_1h_tokens')::bigint,0) > 0
+				THEN COALESCE((usage_detail->>'cache_creation_5m_tokens')::bigint,0)+COALESCE((usage_detail->>'cache_creation_1h_tokens')::bigint,0)
+				ELSE COALESCE((usage_detail->>'cache_creation_tokens')::bigint,0)
+			END
+		  ),0)::bigint AS cache_tokens
    FROM usage_finance_cost_segments WHERE usage_finance_record_id=ufr.id
  ) seg ON TRUE
  LEFT JOIN LATERAL (

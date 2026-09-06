@@ -3,6 +3,7 @@ package repository
 import (
 	"context"
 	"database/sql"
+	"encoding/json"
 	"fmt"
 	"strings"
 	"time"
@@ -734,9 +735,37 @@ func groupEntityToService(g *dbent.Group) *service.Group {
 		DefaultMappedModel:              g.DefaultMappedModel,
 		MessagesDispatchModelConfig:     g.MessagesDispatchModelConfig,
 		RPMLimit:                        g.RpmLimit,
+		LongContextPricingEnabled:       g.LongContextPricingEnabled,
+		ModelPricing:                    decodeGroupModelPricing(g.ModelPricing),
 		CreatedAt:                       g.CreatedAt,
 		UpdatedAt:                       g.UpdatedAt,
 	}
+}
+
+func groupModelPricingJSON(v map[string]service.GroupModelPricing) map[string]interface{} {
+	if v == nil {
+		return map[string]interface{}{}
+	}
+	out := make(map[string]interface{}, len(v))
+	for k, p := range v {
+		out[k] = p
+	}
+	return out
+}
+
+func decodeGroupModelPricing(v map[string]interface{}) map[string]service.GroupModelPricing {
+	if len(v) == 0 {
+		return map[string]service.GroupModelPricing{}
+	}
+	b, err := json.Marshal(v)
+	if err != nil {
+		return map[string]service.GroupModelPricing{}
+	}
+	out := map[string]service.GroupModelPricing{}
+	if json.Unmarshal(b, &out) != nil {
+		return map[string]service.GroupModelPricing{}
+	}
+	return out
 }
 
 func derefString(s *string) string {

@@ -1129,7 +1129,10 @@ function formToAPI(): { group_ids: number[], model_pricing: ChannelModelPricing[
         cache_read_price: mTokToPerToken(entry.cache_read_price),
         image_output_price: mTokToPerToken(entry.image_output_price),
         per_request_price: entry.per_request_price != null && entry.per_request_price !== '' ? Number(entry.per_request_price) : null,
-        intervals: formIntervalsToAPI(entry.intervals || [])
+        intervals: formIntervalsToAPI(entry.intervals || []),
+        time_pricing: entry.time_pricing || null,
+        fast_multiplier: entry.fast_multiplier != null && entry.fast_multiplier !== '' ? Number(entry.fast_multiplier) : null,
+        flex_multiplier: entry.flex_multiplier != null && entry.flex_multiplier !== '' ? Number(entry.flex_multiplier) : null
       })
     }
   }
@@ -1220,7 +1223,10 @@ function apiToForm(channel: Channel): PlatformSection[] {
         cache_read_price: perTokenToMTok(p.cache_read_price),
         image_output_price: perTokenToMTok(p.image_output_price),
         per_request_price: p.per_request_price,
-        intervals: apiIntervalsToForm(p.intervals || [])
+        intervals: apiIntervalsToForm(p.intervals || []),
+        time_pricing: p.time_pricing || null,
+        fast_multiplier: p.fast_multiplier,
+        flex_multiplier: p.flex_multiplier
       } as PricingFormEntry))
 
     // Read web_search_emulation from features_config

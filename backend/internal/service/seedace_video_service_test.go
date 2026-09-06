@@ -246,6 +246,21 @@ func TestSeedaceVideoServiceCreateRecordsUsageWhenBillingSucceeds(t *testing.T) 
 	require.Equal(t, "task-create", *usageRepo.lastLog.VideoTaskID)
 }
 
+func TestSeedaceVideoServiceResolverDisabledUsesLegacyGroupVideoPrice(t *testing.T) {
+	account := seedaceAccountForTest(303, "https://seedace.example/v1", "seedace-key")
+	usageRepo := &seedaceUsageLogRepoStub{}
+	groupID := int64(7)
+	price := 0.03
+	group := &Group{ID: groupID, Platform: PlatformSeedace, RateMultiplier: 2, VideoPrice720P: &price}
+	settings := NewSettingService(&settingUpdateRepoStub{values: map[string]string{SettingKeySalesPricingResolverEnabled: "false"}}, nil)
+	svc := &SeedaceVideoService{accountRepo: &seedaceAccountRepoStub{list: []Account{account}}, usageLogRepo: usageRepo, usageBillingRepo: &seedaceBillingRepoStub{}, billingService: NewBillingService(&config.Config{}, nil), modelPricingResolver: &ModelPricingResolver{}, settingService: settings, billingCacheService: NewBillingCacheService(nil, nil, nil, nil, nil, nil, &config.Config{}, nil), deferredService: NewDeferredService(nil, nil, time.Second), httpUpstream: &seedaceUpstreamStub{}}
+
+	_, err := svc.Create(context.Background(), SeedaceVideoCreateInput{APIKey: &APIKey{ID: 22, User: &User{ID: 33}, GroupID: &groupID, Group: group}, Body: []byte(`{"model":"seedance-2.0-720","duration":4}`)})
+	require.NoError(t, err)
+	require.InDelta(t, 0.12, usageRepo.lastLog.TotalCost, 1e-12)
+	require.InDelta(t, 0.24, usageRepo.lastLog.ActualCost, 1e-12)
+}
+
 func TestSeedaceVideoServiceCreateReturnsUpstreamResultWhenBillingFails(t *testing.T) {
 	account := seedaceAccountForTest(303, "https://seedace.example/v1", "seedace-key")
 	usageRepo := &seedaceUsageLogRepoStub{}

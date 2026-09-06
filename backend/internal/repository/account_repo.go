@@ -49,6 +49,7 @@ import (
 type accountRepository struct {
 	client *dbent.Client // Ent ORM 客户端
 	sql    sqlExecutor   // 原生 SQL 执行接口
+	db     *sql.DB       // 生产事务入口；测试替身可仅提供 sqlExecutor
 	// schedulerCache 用于在账号状态变更时主动同步快照到缓存，
 	// 确保粘性会话能及时感知账号不可用状态。
 	// Used to proactively sync account snapshot to cache when status changes,
@@ -79,7 +80,8 @@ func NewAccountRepository(client *dbent.Client, sqlDB *sql.DB, schedulerCache se
 // newAccountRepositoryWithSQL 是内部构造函数，支持依赖注入 SQL 执行器。
 // 这种设计便于单元测试时注入 mock 对象。
 func newAccountRepositoryWithSQL(client *dbent.Client, sqlq sqlExecutor, schedulerCache service.SchedulerCache) *accountRepository {
-	return &accountRepository{client: client, sql: sqlq, schedulerCache: schedulerCache}
+	db, _ := sqlq.(*sql.DB)
+	return &accountRepository{client: client, sql: sqlq, db: db, schedulerCache: schedulerCache}
 }
 
 func (r *accountRepository) Create(ctx context.Context, account *service.Account) error {
@@ -2015,9 +2017,9 @@ func isSchedulerNeutralExtraKey(key string) bool {
 	return false
 }
 
-func (r *accountRepository) BulkUpdate(ctx context.Context, ids []int64, updates service.AccountBulkUpdate) (int64, error) {
+func buildAccountBulkUpdateSQL(ids []int64, updates service.AccountBulkUpdate) (string, []any, bool, error) {
 	if len(ids) == 0 {
-		return 0, nil
+		return "", nil, false, nil
 	}
 
 	setClauses := make([]string, 0, 8)
@@ -2077,7 +2079,7 @@ func (r *accountRepository) BulkUpdate(ctx context.Context, ids []int64, updates
 	if len(updates.Credentials) > 0 {
 		payload, err := json.Marshal(updates.Credentials)
 		if err != nil {
-			return 0, err
+			return "", nil, false, err
 		}
 		setClauses = append(setClauses, "credentials = COALESCE(credentials, '{}'::jsonb) || $"+itoa(idx)+"::jsonb")
 		args = append(args, payload)
@@ -2086,7 +2088,7 @@ func (r *accountRepository) BulkUpdate(ctx context.Context, ids []int64, updates
 	if len(updates.Extra) > 0 {
 		payload, err := json.Marshal(updates.Extra)
 		if err != nil {
-			return 0, err
+			return "", nil, false, err
 		}
 		setClauses = append(setClauses, "extra = COALESCE(extra, '{}'::jsonb) || $"+itoa(idx)+"::jsonb")
 		args = append(args, payload)
@@ -2094,14 +2096,21 @@ func (r *accountRepository) BulkUpdate(ctx context.Context, ids []int64, updates
 	}
 
 	if len(setClauses) == 0 {
-		return 0, nil
+		return "", nil, false, nil
 	}
 
 	setClauses = append(setClauses, "updated_at = NOW()")
 
 	query := "UPDATE accounts SET " + joinClauses(setClauses, ", ") + " WHERE id = ANY($" + itoa(idx) + ") AND deleted_at IS NULL"
 	args = append(args, pq.Array(ids))
+	return query, args, true, nil
+}
 
+func (r *accountRepository) BulkUpdate(ctx context.Context, ids []int64, updates service.AccountBulkUpdate) (int64, error) {
+	query, args, hasUpdates, err := buildAccountBulkUpdateSQL(ids, updates)
+	if err != nil || !hasUpdates {
+		return 0, err
+	}
 	result, err := r.sql.ExecContext(ctx, query, args...)
 	if err != nil {
 		return 0, err
@@ -2127,6 +2136,292 @@ func (r *accountRepository) BulkUpdate(ctx context.Context, ids []int64, updates
 		}
 	}
 	return rows, nil
+}
+
+// BulkUpdateWithGroups applies account fields and optional group bindings in
+// one SQL transaction. Missing/deleted targets and platform/type-specific
+// field mismatches are rejected as one 422 batch; no partial success is
+// returned.
+func (r *accountRepository) BulkUpdateWithGroups(ctx context.Context, ids []int64, updates service.AccountBulkUpdate, groupIDs []int64) ([]int64, error) {
+	return r.bulkUpdateWithGroupsValidated(ctx, ids, updates, groupIDs, nil, false)
+}
+
+func (r *accountRepository) BulkUpdateWithGroupsValidated(ctx context.Context, ids []int64, updates service.AccountBulkUpdate, groupIDs []int64, expectedTargets []service.AccountBulkUpdateTarget, checkMixedChannel bool) ([]int64, error) {
+	return r.bulkUpdateWithGroupsValidated(ctx, ids, updates, groupIDs, expectedTargets, checkMixedChannel)
+}
+
+func (r *accountRepository) bulkUpdateWithGroupsValidated(ctx context.Context, ids []int64, updates service.AccountBulkUpdate, groupIDs []int64, expectedTargets []service.AccountBulkUpdateTarget, checkMixedChannel bool) ([]int64, error) {
+	if len(ids) == 0 {
+		return nil, nil
+	}
+	ids = uniqueInt64s(ids)
+	if r.db == nil {
+		return nil, fmt.Errorf("bulk update atomic transaction requires *sql.DB")
+	}
+
+	tx, err := r.db.BeginTx(ctx, nil)
+	if err != nil {
+		return nil, err
+	}
+	defer func() { _ = tx.Rollback() }()
+
+	rows, err := tx.QueryContext(ctx, "SELECT id, platform, type FROM accounts WHERE id = ANY($1) AND deleted_at IS NULL FOR UPDATE", pq.Array(ids))
+	if err != nil {
+		return nil, err
+	}
+	lockedIDs := make([]int64, 0, len(ids))
+	lockedTargets := make([]service.AccountBulkUpdateTarget, 0, len(ids))
+	for rows.Next() {
+		var target service.AccountBulkUpdateTarget
+		if err := rows.Scan(&target.ID, &target.Platform, &target.Type); err != nil {
+			_ = rows.Close()
+			return nil, err
+		}
+		lockedIDs = append(lockedIDs, target.ID)
+		lockedTargets = append(lockedTargets, target)
+	}
+	if err := rows.Err(); err != nil {
+		_ = rows.Close()
+		return nil, err
+	}
+	if err := rows.Close(); err != nil {
+		return nil, err
+	}
+	if len(lockedIDs) != len(ids) {
+		return nil, service.ErrBulkUpdateTargetInvalid
+	}
+	if err := validateLockedBulkUpdateTargets(lockedTargets, updates, expectedTargets); err != nil {
+		return nil, err
+	}
+	if checkMixedChannel {
+		if err := validateMixedChannelTargets(ctx, tx, lockedTargets, groupIDs); err != nil {
+			return nil, err
+		}
+	}
+	lockedByID := make(map[int64]service.AccountBulkUpdateTarget, len(lockedTargets))
+	for _, target := range lockedTargets {
+		lockedByID[target.ID] = target
+	}
+	orderedTargets := make([]service.AccountBulkUpdateTarget, 0, len(ids))
+	for _, id := range ids {
+		target, ok := lockedByID[id]
+		if !ok {
+			return nil, service.ErrBulkUpdateTargetInvalid
+		}
+		orderedTargets = append(orderedTargets, target)
+	}
+	lockedTargets = orderedTargets
+	lockedIDs = make([]int64, 0, len(lockedTargets))
+	for _, target := range lockedTargets {
+		lockedIDs = append(lockedIDs, target.ID)
+	}
+
+	if query, args, hasUpdates, err := buildAccountBulkUpdateSQL(lockedIDs, updates); err != nil {
+		return nil, err
+	} else if hasUpdates {
+		if _, err := tx.ExecContext(ctx, query, args...); err != nil {
+			return nil, err
+		}
+	}
+
+	if groupIDs != nil {
+		previousGroupIDs, err := loadAccountGroupIDsForUpdate(ctx, tx, lockedIDs)
+		if err != nil {
+			return nil, err
+		}
+		if _, err := tx.ExecContext(ctx, "DELETE FROM account_groups WHERE account_id = ANY($1)", pq.Array(lockedIDs)); err != nil {
+			return nil, err
+		}
+		for _, accountID := range lockedIDs {
+			for priority, groupID := range groupIDs {
+				if _, err := tx.ExecContext(ctx,
+					"INSERT INTO account_groups (account_id, group_id, priority) VALUES ($1, $2, $3)",
+					accountID, groupID, priority+1,
+				); err != nil {
+					return nil, err
+				}
+			}
+			changedGroupIDs := mergeGroupIDs(previousGroupIDs[accountID], groupIDs)
+			if err := enqueueSchedulerOutbox(ctx, tx, service.SchedulerOutboxEventAccountGroupsChanged, &accountID, nil, buildSchedulerGroupPayload(changedGroupIDs)); err != nil {
+				return nil, err
+			}
+		}
+	}
+
+	if err := enqueueSchedulerOutbox(ctx, tx, service.SchedulerOutboxEventAccountBulkChanged, nil, nil, map[string]any{"account_ids": lockedIDs}); err != nil {
+		return nil, err
+	}
+	if err := tx.Commit(); err != nil {
+		return nil, err
+	}
+
+	if (updates.Status != nil && (*updates.Status == service.StatusError || *updates.Status == service.StatusDisabled)) ||
+		(updates.Schedulable != nil && !*updates.Schedulable) {
+		r.syncSchedulerAccountSnapshots(ctx, lockedIDs)
+	}
+	return lockedIDs, nil
+}
+
+func uniqueInt64s(ids []int64) []int64 {
+	seen := make(map[int64]struct{}, len(ids))
+	out := make([]int64, 0, len(ids))
+	for _, id := range ids {
+		if _, ok := seen[id]; ok {
+			continue
+		}
+		seen[id] = struct{}{}
+		out = append(out, id)
+	}
+	return out
+}
+
+func validateBulkUpdateTargets(accounts []*service.Account, updates service.AccountBulkUpdate, expected []service.AccountBulkUpdateTarget) error {
+	targets := make([]service.AccountBulkUpdateTarget, 0, len(accounts))
+	for _, account := range accounts {
+		if account != nil {
+			targets = append(targets, service.AccountBulkUpdateTarget{ID: account.ID, Platform: account.Platform, Type: account.Type})
+		}
+	}
+	return validateLockedBulkUpdateTargets(targets, updates, expected)
+}
+
+func validateLockedBulkUpdateTargets(targets []service.AccountBulkUpdateTarget, updates service.AccountBulkUpdate, expected []service.AccountBulkUpdateTarget) error {
+	expectedByID := make(map[int64]service.AccountBulkUpdateTarget, len(expected))
+	for _, target := range expected {
+		expectedByID[target.ID] = target
+	}
+	for _, target := range targets {
+		if expected, ok := expectedByID[target.ID]; ok && (expected.Platform != target.Platform || expected.Type != target.Type) {
+			return service.ErrBulkUpdateTargetInvalid
+		}
+		if !bulkUpdateFieldApplicable(target.Platform, target.Type, updates) {
+			return service.ErrBulkUpdateFieldNotApplicable
+		}
+	}
+	return nil
+}
+
+func bulkUpdateFieldApplicable(platform, accountType string, updates service.AccountBulkUpdate) bool {
+	if !platformSpecificBulkFieldsPresent(updates) {
+		return true
+	}
+	isOpenAI := platform == service.PlatformOpenAI
+	isOAuth := isOpenAI && accountType == service.AccountTypeOAuth
+	isAPIKey := isOpenAI && accountType == service.AccountTypeAPIKey
+	if hasAnyKey(updates.Extra, "openai_compact_mode") || hasAnyKey(updates.Credentials, "compact_model_mapping") {
+		if !isOAuth && !isAPIKey {
+			return false
+		}
+	}
+	if hasAnyKey(updates.Extra, "openai_oauth_responses_websockets_v2_mode", "openai_oauth_responses_websockets_v2_enabled", "codex_identity_mode") && !isOAuth {
+		return false
+	}
+	if hasAnyKey(updates.Extra, "openai_apikey_responses_websockets_v2_mode", "openai_apikey_responses_websockets_v2_enabled", "structured_output_mode") && !isAPIKey {
+		return false
+	}
+	return true
+}
+
+func platformSpecificBulkFieldsPresent(updates service.AccountBulkUpdate) bool {
+	return hasAnyKey(updates.Extra,
+		"openai_compact_mode", "openai_oauth_responses_websockets_v2_mode", "openai_oauth_responses_websockets_v2_enabled",
+		"openai_apikey_responses_websockets_v2_mode", "openai_apikey_responses_websockets_v2_enabled", "codex_identity_mode", "structured_output_mode") ||
+		hasAnyKey(updates.Credentials, "compact_model_mapping")
+}
+
+func hasAnyKey(values map[string]any, keys ...string) bool {
+	for _, key := range keys {
+		if _, ok := values[key]; ok {
+			return true
+		}
+	}
+	return false
+}
+
+func loadAccountGroupIDsForUpdate(ctx context.Context, tx *sql.Tx, accountIDs []int64) (map[int64][]int64, error) {
+	result := make(map[int64][]int64, len(accountIDs))
+	for _, accountID := range accountIDs {
+		result[accountID] = nil
+	}
+	rows, err := tx.QueryContext(ctx, "SELECT account_id, group_id FROM account_groups WHERE account_id = ANY($1) FOR UPDATE", pq.Array(accountIDs))
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	for rows.Next() {
+		var accountID, groupID int64
+		if err := rows.Scan(&accountID, &groupID); err != nil {
+			return nil, err
+		}
+		result[accountID] = append(result[accountID], groupID)
+	}
+	return result, rows.Err()
+}
+
+func validateMixedChannelTargets(ctx context.Context, tx *sql.Tx, targets []service.AccountBulkUpdateTarget, groupIDs []int64) error {
+	if tx == nil || len(groupIDs) == 0 {
+		return nil
+	}
+	groupIDs = uniqueInt64s(groupIDs)
+	if _, err := tx.ExecContext(ctx, "SELECT id FROM groups WHERE id = ANY($1) FOR UPDATE", pq.Array(groupIDs)); err != nil {
+		return err
+	}
+
+	var antigravityTarget, anthropicTarget *service.AccountBulkUpdateTarget
+	targetIDs := make([]int64, 0, len(targets))
+	for i := range targets {
+		target := &targets[i]
+		targetIDs = append(targetIDs, target.ID)
+		switch target.Platform {
+		case service.PlatformAntigravity:
+			antigravityTarget = target
+		case service.PlatformAnthropic:
+			anthropicTarget = target
+		}
+	}
+	if antigravityTarget != nil && anthropicTarget != nil {
+		return &service.MixedChannelError{
+			GroupID:         groupIDs[0],
+			GroupName:       fmt.Sprintf("Group %d", groupIDs[0]),
+			CurrentPlatform: antigravityTarget.Platform,
+			OtherPlatform:   anthropicTarget.Platform,
+		}
+	}
+
+	currentPlatform := ""
+	if antigravityTarget != nil {
+		currentPlatform = service.PlatformAntigravity
+	} else if anthropicTarget != nil {
+		currentPlatform = service.PlatformAnthropic
+	}
+	if currentPlatform == "" {
+		return nil
+	}
+	rows, err := tx.QueryContext(ctx, `
+		SELECT DISTINCT ag.group_id, a.platform
+		FROM account_groups ag
+		JOIN accounts a ON a.id = ag.account_id
+		WHERE ag.group_id = ANY($1)
+		  AND a.deleted_at IS NULL
+		  AND NOT (a.id = ANY($2))`, pq.Array(groupIDs), pq.Array(targetIDs))
+	if err != nil {
+		return err
+	}
+	defer rows.Close()
+	for rows.Next() {
+		var groupID int64
+		var other string
+		if err := rows.Scan(&groupID, &other); err != nil {
+			return err
+		}
+		if (other == service.PlatformAntigravity || other == service.PlatformAnthropic) && other != currentPlatform {
+			return &service.MixedChannelError{GroupID: groupID, GroupName: fmt.Sprintf("Group %d", groupID), CurrentPlatform: currentPlatform, OtherPlatform: other}
+		}
+	}
+	if err := rows.Err(); err != nil {
+		return err
+	}
+	return nil
 }
 
 type accountGroupQueryOptions struct {
@@ -2308,6 +2603,14 @@ func tempUnschedulablePredicate() dbpredicate.Account {
 			entsql.IsNull(col),
 			entsql.LTE(col, entsql.Expr("NOW()")),
 		))
+		// A Team workspace block is authoritative across every linked account;
+		// keep all non-cleared events out of every scheduler candidate query.
+		credentials := s.C("credentials")
+		s.Where(entsql.P(func(b *entsql.Builder) {
+			b.WriteString("NOT EXISTS (SELECT 1 FROM openai_team_block_events AS tb WHERE tb.state <> 'cleared' AND tb.team_id = ").
+				Ident(credentials).
+				WriteString("->>'chatgpt_account_id')")
+		}))
 	})
 }
 

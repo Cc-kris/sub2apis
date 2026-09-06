@@ -37,6 +37,7 @@ func (r *channelMonitorRepository) Create(ctx context.Context, m *service.Channe
 	builder := client.ChannelMonitor.Create().
 		SetName(m.Name).
 		SetProvider(channelmonitor.Provider(m.Provider)).
+		SetMode(defaultMonitorModeRepo(m.Mode)).
 		SetAPIMode(defaultAPIModeRepo(m.APIMode)).
 		SetEndpoint(m.Endpoint).
 		SetAPIKeyEncrypted(m.APIKey). // 调用方传入的已是密文
@@ -50,6 +51,9 @@ func (r *channelMonitorRepository) Create(ctx context.Context, m *service.Channe
 		SetBodyOverrideMode(defaultBodyModeRepo(m.BodyOverrideMode))
 	if m.TemplateID != nil {
 		builder = builder.SetTemplateID(*m.TemplateID)
+	}
+	if m.AccountID != nil {
+		builder = builder.SetAccountID(*m.AccountID)
 	}
 	if m.BodyOverride != nil {
 		builder = builder.SetBodyOverride(m.BodyOverride)
@@ -80,6 +84,7 @@ func (r *channelMonitorRepository) Update(ctx context.Context, m *service.Channe
 	updater := client.ChannelMonitor.UpdateOneID(m.ID).
 		SetName(m.Name).
 		SetProvider(channelmonitor.Provider(m.Provider)).
+		SetMode(defaultMonitorModeRepo(m.Mode)).
 		SetAPIMode(defaultAPIModeRepo(m.APIMode)).
 		SetEndpoint(m.Endpoint).
 		SetAPIKeyEncrypted(m.APIKey).
@@ -94,6 +99,11 @@ func (r *channelMonitorRepository) Update(ctx context.Context, m *service.Channe
 		updater = updater.SetTemplateID(*m.TemplateID)
 	} else {
 		updater = updater.ClearTemplateID()
+	}
+	if m.AccountID != nil {
+		updater = updater.SetAccountID(*m.AccountID)
+	} else {
+		updater = updater.ClearAccountID()
 	}
 	if m.BodyOverride != nil {
 		updater = updater.SetBodyOverride(m.BodyOverride)
@@ -212,6 +222,24 @@ func (r *channelMonitorRepository) InsertHistoryBatch(ctx context.Context, rows 
 	}
 	if _, err := client.ChannelMonitorHistory.CreateBulk(bulk...).Save(ctx); err != nil {
 		return fmt.Errorf("insert history bulk: %w", err)
+	}
+	return nil
+}
+
+// RecordGatewayTelemetry writes only real gateway observations into monitors
+// explicitly configured as passive and bound to the selected account.
+func (r *channelMonitorRepository) RecordGatewayTelemetry(ctx context.Context, accountID int64, model, status string, latencyMs int, checkedAt time.Time) error {
+	if r == nil || r.db == nil || accountID <= 0 {
+		return nil
+	}
+	const q = `
+INSERT INTO channel_monitor_histories
+    (monitor_id, model, status, latency_ms, message, checked_at)
+SELECT id, COALESCE(NULLIF($2, ''), primary_model), $3, $4, 'gateway', $5
+FROM channel_monitors
+WHERE account_id = $1 AND enabled = TRUE AND mode = 'passive'`
+	if _, err := r.db.ExecContext(ctx, q, accountID, strings.TrimSpace(model), strings.TrimSpace(status), latencyMs, checkedAt.UTC()); err != nil {
+		return fmt.Errorf("record gateway telemetry: %w", err)
 	}
 	return nil
 }
@@ -710,6 +738,8 @@ func entToServiceMonitor(row *dbent.ChannelMonitor) *service.ChannelMonitor {
 		ID:               row.ID,
 		Name:             row.Name,
 		Provider:         string(row.Provider),
+		Mode:             defaultMonitorModeRepo(row.Mode),
+		AccountID:        row.AccountID,
 		APIMode:          defaultAPIModeRepo(row.APIMode),
 		Endpoint:         row.Endpoint,
 		APIKey:           row.APIKeyEncrypted, // 仍为密文，service 层负责解密
@@ -731,6 +761,14 @@ func entToServiceMonitor(row *dbent.ChannelMonitor) *service.ChannelMonitor {
 		out.TemplateID = &id
 	}
 	return out
+}
+
+func defaultMonitorModeRepo(mode string) string {
+	mode = strings.TrimSpace(mode)
+	if mode == "" {
+		return service.MonitorModeActive
+	}
+	return mode
 }
 
 // emptyHeadersIfNilRepo 与 service.emptyHeadersIfNil 功能一致，

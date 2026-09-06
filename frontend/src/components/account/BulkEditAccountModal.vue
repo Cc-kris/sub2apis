@@ -742,6 +742,26 @@
         </div>
       </div>
 
+      <!-- OpenAI OAuth identity mode -->
+      <div v-if="allOpenAIOAuth" class="border-t border-gray-200 pt-4">
+        <div class="mb-3 flex items-center justify-between">
+          <div class="flex-1 pr-4">
+            <label id="bulk-edit-openai-codex-identity-label" class="input-label mb-0" for="bulk-edit-openai-codex-identity-enabled">
+              {{ t('admin.accounts.openai.codexIdentityMode') }}
+            </label>
+            <p class="mt-1 text-xs text-gray-500 dark:text-gray-400">{{ t('admin.accounts.openai.codexIdentityModeDesc') }}</p>
+          </div>
+          <input v-model="enableCodexIdentityMode" id="bulk-edit-openai-codex-identity-enabled" type="checkbox" class="rounded border-gray-300 text-primary-600 focus:ring-primary-500" />
+        </div>
+        <Select
+          v-model="codexIdentityMode"
+          data-testid="bulk-edit-openai-codex-identity-mode-select"
+          :options="codexIdentityModeOptions"
+          :disabled="!enableCodexIdentityMode"
+          aria-labelledby="bulk-edit-openai-codex-identity-label"
+        />
+      </div>
+
       <!-- OpenAI OAuth Codex CLI only -->
       <div v-if="allOpenAIOAuth" class="border-t border-gray-200 pt-4 dark:border-dark-600">
         <div class="mb-3 flex items-center justify-between">
@@ -784,6 +804,26 @@
             />
           </button>
         </div>
+      </div>
+
+      <!-- OpenAI API Key structured output mode -->
+      <div v-if="allOpenAIAPIKey" class="border-t border-gray-200 pt-4">
+        <div class="mb-3 flex items-center justify-between">
+          <div class="flex-1 pr-4">
+            <label id="bulk-edit-openai-structured-output-label" class="input-label mb-0" for="bulk-edit-openai-structured-output-enabled">
+              {{ t('admin.accounts.openai.structuredOutputMode') }}
+            </label>
+            <p class="mt-1 text-xs text-gray-500 dark:text-gray-400">{{ t('admin.accounts.openai.structuredOutputModeDesc') }}</p>
+          </div>
+          <input v-model="enableStructuredOutputMode" id="bulk-edit-openai-structured-output-enabled" type="checkbox" class="rounded border-gray-300 text-primary-600 focus:ring-primary-500" />
+        </div>
+        <Select
+          v-model="openAIStructuredOutputMode"
+          data-testid="bulk-edit-openai-structured-output-mode-select"
+          :options="openAIStructuredOutputModeOptions"
+          :disabled="!enableStructuredOutputMode"
+          aria-labelledby="bulk-edit-openai-structured-output-label"
+        />
       </div>
 
       <!-- OpenAI API Key WS mode -->
@@ -1274,6 +1314,8 @@ const enableOpenAIPassthrough = ref(false)
 const enableOpenAIWSMode = ref(false)
 const enableOpenAIAPIKeyWSMode = ref(false)
 const enableCodexCLIOnly = ref(false)
+const enableCodexIdentityMode = ref(false)
+const enableStructuredOutputMode = ref(false)
 const enableOpenAICompactMode = ref(false)
 const enableOpenAICompactModelMapping = ref(false)
 const enableRpmLimit = ref(false)
@@ -1306,6 +1348,8 @@ const openaiPassthroughEnabled = ref(false)
 const openaiOAuthResponsesWebSocketV2Mode = ref<OpenAIWSMode>(OPENAI_WS_MODE_OFF)
 const openaiAPIKeyResponsesWebSocketV2Mode = ref<OpenAIWSMode>(OPENAI_WS_MODE_OFF)
 const codexCLIOnlyEnabled = ref(false)
+const codexIdentityMode = ref<'disabled' | 'device' | 'session' | 'full'>('disabled')
+const openAIStructuredOutputMode = ref<'native' | 'force_non_strict'>('native')
 const openAICompactMode = ref<OpenAICompactMode>('auto')
 const openAICompactModelMappings = ref<ModelMapping[]>([])
 const rpmLimitEnabled = ref(false)
@@ -1382,6 +1426,16 @@ const openAICompactModeOptions = computed(() => [
   { value: 'auto', label: t('admin.accounts.openai.compactModeAuto') },
   { value: 'force_on', label: t('admin.accounts.openai.compactModeForceOn') },
   { value: 'force_off', label: t('admin.accounts.openai.compactModeForceOff') }
+])
+const codexIdentityModeOptions = computed(() => [
+  { value: 'disabled', label: t('admin.accounts.openai.codexIdentityModeDisabled') },
+  { value: 'device', label: t('admin.accounts.openai.codexIdentityModeDevice') },
+  { value: 'session', label: t('admin.accounts.openai.codexIdentityModeSession') },
+  { value: 'full', label: t('admin.accounts.openai.codexIdentityModeFull') }
+])
+const openAIStructuredOutputModeOptions = computed(() => [
+  { value: 'native', label: t('admin.accounts.openai.structuredOutputModeNative') },
+  { value: 'force_non_strict', label: t('admin.accounts.openai.structuredOutputModeForceNonStrict') }
 ])
 const openAIWSModeConcurrencyHintKey = computed(() =>
   resolveOpenAIWSModeConcurrencyHintKey(openaiOAuthResponsesWebSocketV2Mode.value)
@@ -1593,6 +1647,16 @@ const buildUpdatePayload = (): Record<string, unknown> | null => {
     extra.codex_cli_only = codexCLIOnlyEnabled.value
   }
 
+  if (enableCodexIdentityMode.value) {
+    const extra = ensureExtra()
+    extra.codex_identity_mode = codexIdentityMode.value
+  }
+
+  if (enableStructuredOutputMode.value) {
+    const extra = ensureExtra()
+    extra.structured_output_mode = openAIStructuredOutputMode.value
+  }
+
   if (enableOpenAICompactMode.value) {
     const extra = ensureExtra()
     extra.openai_compact_mode = openAICompactMode.value
@@ -1700,6 +1764,8 @@ const handleSubmit = async () => {
     enableOpenAIWSMode.value ||
     enableOpenAIAPIKeyWSMode.value ||
     enableCodexCLIOnly.value ||
+    enableCodexIdentityMode.value ||
+    enableStructuredOutputMode.value ||
     enableOpenAICompactMode.value ||
     enableOpenAICompactModelMapping.value ||
     enableRpmLimit.value ||
@@ -1727,6 +1793,8 @@ const handleSubmit = async () => {
       enableOpenAIWSMode.value ||
       enableOpenAIAPIKeyWSMode.value ||
       enableCodexCLIOnly.value ||
+      enableCodexIdentityMode.value ||
+      enableStructuredOutputMode.value ||
       enableOpenAICompactMode.value ||
       enableOpenAICompactModelMapping.value ||
       enableRpmLimit.value ||
@@ -1866,6 +1934,8 @@ watch(
       enableOpenAIWSMode.value = false
       enableOpenAIAPIKeyWSMode.value = false
       enableCodexCLIOnly.value = false
+      enableCodexIdentityMode.value = false
+      enableStructuredOutputMode.value = false
       enableOpenAICompactMode.value = false
       enableOpenAICompactModelMapping.value = false
       enableRpmLimit.value = false
@@ -1891,6 +1961,8 @@ watch(
       openaiOAuthResponsesWebSocketV2Mode.value = OPENAI_WS_MODE_OFF
       openaiAPIKeyResponsesWebSocketV2Mode.value = OPENAI_WS_MODE_OFF
       codexCLIOnlyEnabled.value = false
+      codexIdentityMode.value = 'disabled'
+      openAIStructuredOutputMode.value = 'native'
       openAICompactMode.value = 'auto'
       openAICompactModelMappings.value = []
       rpmLimitEnabled.value = false

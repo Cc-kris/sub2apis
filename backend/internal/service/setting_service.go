@@ -11,9 +11,11 @@ import (
 	"log/slog"
 	"math"
 	"net/url"
+	"regexp"
 	"sort"
 	"strconv"
 	"strings"
+	"sync"
 	"sync/atomic"
 	"time"
 
@@ -106,6 +108,10 @@ type cachedSalesPricingVersion struct {
 	value     SalesPricingVersion
 	expiresAt int64
 }
+type cachedSalesPricingResolver struct {
+	enabled   bool
+	expiresAt int64
+}
 
 const salesPricingVersionCacheTTL = 60 * time.Second
 const salesPricingVersionErrorTTL = 5 * time.Second
@@ -162,20 +168,65 @@ type WebSearchManagerBuilder func(cfg *WebSearchEmulationConfig, proxyURLs map[i
 
 // SettingService 系统设置服务
 type SettingService struct {
-	settingRepo               SettingRepository
-	defaultSubGroupReader     DefaultSubscriptionGroupReader
-	proxyRepo                 ProxyRepository // for resolving websearch provider proxy URLs
-	cfg                       *config.Config
-	secretEncryptor           SecretEncryptor
-	onUpdate                  func() // Callback when settings are updated (for cache invalidation)
-	version                   string // Application version
-	webSearchManagerBuilder   WebSearchManagerBuilder
-	antigravityUAVersionCache atomic.Value // *cachedAntigravityUserAgentVersion
-	antigravityUAVersionSF    singleflight.Group
-	openAICodexUACache        atomic.Value // *cachedOpenAICodexUserAgent
-	openAICodexUASF           singleflight.Group
-	salesPricingVersionCache  atomic.Value // *cachedSalesPricingVersion
-	salesPricingVersionSF     singleflight.Group
+	settingRepo                SettingRepository
+	defaultSubGroupReader      DefaultSubscriptionGroupReader
+	proxyRepo                  ProxyRepository // for resolving websearch provider proxy URLs
+	cfg                        *config.Config
+	secretEncryptor            SecretEncryptor
+	onUpdate                   func() // Callback when settings are updated (for cache invalidation)
+	version                    string // Application version
+	webSearchManagerBuilder    WebSearchManagerBuilder
+	antigravityUAVersionCache  atomic.Value // *cachedAntigravityUserAgentVersion
+	antigravityUAVersionSF     singleflight.Group
+	openAICodexUACache         atomic.Value // *cachedOpenAICodexUserAgent
+	openAICodexUASF            singleflight.Group
+	salesPricingVersionCache   atomic.Value // *cachedSalesPricingVersion
+	salesPricingVersionSF      singleflight.Group
+	salesPricingResolverCache  atomic.Value // *cachedSalesPricingResolver
+	groupUsageRollupRuntime    atomic.Value // *cachedGroupUsageRollupRuntime
+	openAITeamLinkedRuntime    atomic.Value // *cachedOpenAITeamLinkedRuntime
+	groupUsageRollupListenerMu sync.Mutex
+	groupUsageRollupListeners  []func(bool)
+}
+
+type cachedGroupUsageRollupRuntime struct {
+	enabled bool
+}
+type cachedOpenAITeamLinkedRuntime struct{ enabled bool }
+
+// IsOpenAITeamLinkedResolverEnabled reads the Team linkage switch. Missing
+// values default to enabled; unreadable values retain the last confirmed state
+// and fail closed before the first successful read.
+func (s *SettingService) IsOpenAITeamLinkedResolverEnabled(ctx context.Context) bool {
+	if s == nil || s.settingRepo == nil {
+		return true
+	}
+	value, err := s.settingRepo.GetValue(ctx, SettingKeyOpenAITeamLinkedResolverEnabled)
+	if err != nil {
+		if errors.Is(err, ErrSettingNotFound) {
+			s.openAITeamLinkedRuntime.Store(&cachedOpenAITeamLinkedRuntime{enabled: true})
+			return true
+		}
+		if cached := s.openAITeamLinkedRuntime.Load(); cached != nil {
+			return cached.(*cachedOpenAITeamLinkedRuntime).enabled
+		}
+		return false
+	}
+	if strings.TrimSpace(value) == "" {
+		s.openAITeamLinkedRuntime.Store(&cachedOpenAITeamLinkedRuntime{enabled: true})
+		return true
+	}
+	enabled := !isFalseSettingValue(value)
+	s.openAITeamLinkedRuntime.Store(&cachedOpenAITeamLinkedRuntime{enabled: enabled})
+	return enabled
+}
+
+// GroupUsageRollupRuntime distinguishes an explicit enabled state from an
+// unreadable control plane. Unknown pauses aggregation and uses realtime data,
+// avoiding a write after an administrator has already disabled the feature.
+type GroupUsageRollupRuntime struct {
+	Enabled bool
+	Known   bool
 }
 
 // DefaultPlatformQuotaSetting 单 platform 三档限额（nil = 沿用上层；0 = 显式禁用；>0 = 上限）
@@ -704,6 +755,8 @@ func (s *SettingService) GetPublicSettings(ctx context.Context) (*PublicSettings
 		SettingKeyEmailVerifyEnabled,
 		SettingKeyForceEmailOnThirdPartySignup,
 		SettingKeyRegistrationEmailSuffixWhitelist,
+		SettingKeyRegistrationDomainLimitEnabled,
+		SettingKeyRegistrationDomainLimitPerDomain,
 		SettingKeyPromoCodeEnabled,
 		SettingKeyPasswordResetEnabled,
 		SettingKeyInvitationCodeEnabled,
@@ -831,47 +884,55 @@ func (s *SettingService) GetPublicSettings(ctx context.Context) (*PublicSettings
 		EmailVerifyEnabled:               emailVerifyEnabled,
 		ForceEmailOnThirdPartySignup:     settings[SettingKeyForceEmailOnThirdPartySignup] == "true",
 		RegistrationEmailSuffixWhitelist: registrationEmailSuffixWhitelist,
-		PromoCodeEnabled:                 settings[SettingKeyPromoCodeEnabled] != "false", // 默认启用
-		PasswordResetEnabled:             passwordResetEnabled,
-		InvitationCodeEnabled:            settings[SettingKeyInvitationCodeEnabled] == "true",
-		TotpEnabled:                      settings[SettingKeyTotpEnabled] == "true",
-		LoginAgreementEnabled:            settings[SettingKeyLoginAgreementEnabled] == "true" && len(loginAgreementDocuments) > 0,
-		LoginAgreementMode:               normalizeLoginAgreementMode(settings[SettingKeyLoginAgreementMode]),
-		LoginAgreementUpdatedAt:          loginAgreementUpdatedAt,
-		LoginAgreementRevision:           buildLoginAgreementRevision(loginAgreementUpdatedAt, loginAgreementDocuments),
-		LoginAgreementDocuments:          loginAgreementDocuments,
-		TurnstileEnabled:                 settings[SettingKeyTurnstileEnabled] == "true",
-		TurnstileSiteKey:                 settings[SettingKeyTurnstileSiteKey],
-		SiteName:                         s.getStringOrDefault(settings, SettingKeySiteName, "Sub2API"),
-		SiteLogo:                         settings[SettingKeySiteLogo],
-		SiteSubtitle:                     s.getStringOrDefault(settings, SettingKeySiteSubtitle, "Subscription to API Conversion Platform"),
-		APIBaseURL:                       settings[SettingKeyAPIBaseURL],
-		ContactInfo:                      settings[SettingKeyContactInfo],
-		DocURL:                           settings[SettingKeyDocURL],
-		HomeContent:                      settings[SettingKeyHomeContent],
-		HideCcsImportButton:              settings[SettingKeyHideCcsImportButton] == "true",
-		PurchaseSubscriptionEnabled:      settings[SettingKeyPurchaseSubscriptionEnabled] == "true",
-		PurchaseSubscriptionURL:          strings.TrimSpace(settings[SettingKeyPurchaseSubscriptionURL]),
-		TableDefaultPageSize:             tableDefaultPageSize,
-		TablePageSizeOptions:             tablePageSizeOptions,
-		CustomMenuItems:                  settings[SettingKeyCustomMenuItems],
-		CustomEndpoints:                  settings[SettingKeyCustomEndpoints],
-		LinuxDoOAuthEnabled:              linuxDoEnabled,
-		DingTalkOAuthEnabled:             dingTalkEnabled,
-		WeChatOAuthEnabled:               weChatEnabled,
-		WeChatOAuthOpenEnabled:           weChatOpenEnabled,
-		WeChatOAuthMPEnabled:             weChatMPEnabled,
-		WeChatOAuthMobileEnabled:         weChatMobileEnabled,
-		BackendModeEnabled:               settings[SettingKeyBackendModeEnabled] == "true",
-		PaymentEnabled:                   settings[SettingPaymentEnabled] == "true",
-		OIDCOAuthEnabled:                 oidcEnabled,
-		OIDCOAuthProviderName:            oidcProviderName,
-		GitHubOAuthEnabled:               gitHubEnabled,
-		GoogleOAuthEnabled:               googleEnabled,
-		BalanceLowNotifyEnabled:          settings[SettingKeyBalanceLowNotifyEnabled] == "true",
-		AccountQuotaNotifyEnabled:        settings[SettingKeyAccountQuotaNotifyEnabled] == "true",
-		BalanceLowNotifyThreshold:        balanceLowNotifyThreshold,
-		BalanceLowNotifyRechargeURL:      settings[SettingKeyBalanceLowNotifyRechargeURL],
+		RegistrationDomainLimitEnabled:   settings[SettingKeyRegistrationDomainLimitEnabled] == "true",
+		RegistrationDomainLimitPerDomain: func() int {
+			n, _ := strconv.Atoi(settings[SettingKeyRegistrationDomainLimitPerDomain])
+			if n > 0 {
+				return n
+			}
+			return 3
+		}(),
+		PromoCodeEnabled:            settings[SettingKeyPromoCodeEnabled] != "false", // 默认启用
+		PasswordResetEnabled:        passwordResetEnabled,
+		InvitationCodeEnabled:       settings[SettingKeyInvitationCodeEnabled] == "true",
+		TotpEnabled:                 settings[SettingKeyTotpEnabled] == "true",
+		LoginAgreementEnabled:       settings[SettingKeyLoginAgreementEnabled] == "true" && len(loginAgreementDocuments) > 0,
+		LoginAgreementMode:          normalizeLoginAgreementMode(settings[SettingKeyLoginAgreementMode]),
+		LoginAgreementUpdatedAt:     loginAgreementUpdatedAt,
+		LoginAgreementRevision:      buildLoginAgreementRevision(loginAgreementUpdatedAt, loginAgreementDocuments),
+		LoginAgreementDocuments:     loginAgreementDocuments,
+		TurnstileEnabled:            settings[SettingKeyTurnstileEnabled] == "true",
+		TurnstileSiteKey:            settings[SettingKeyTurnstileSiteKey],
+		SiteName:                    s.getStringOrDefault(settings, SettingKeySiteName, "Sub2API"),
+		SiteLogo:                    settings[SettingKeySiteLogo],
+		SiteSubtitle:                s.getStringOrDefault(settings, SettingKeySiteSubtitle, "Subscription to API Conversion Platform"),
+		APIBaseURL:                  settings[SettingKeyAPIBaseURL],
+		ContactInfo:                 settings[SettingKeyContactInfo],
+		DocURL:                      settings[SettingKeyDocURL],
+		HomeContent:                 settings[SettingKeyHomeContent],
+		HideCcsImportButton:         settings[SettingKeyHideCcsImportButton] == "true",
+		PurchaseSubscriptionEnabled: settings[SettingKeyPurchaseSubscriptionEnabled] == "true",
+		PurchaseSubscriptionURL:     strings.TrimSpace(settings[SettingKeyPurchaseSubscriptionURL]),
+		TableDefaultPageSize:        tableDefaultPageSize,
+		TablePageSizeOptions:        tablePageSizeOptions,
+		CustomMenuItems:             settings[SettingKeyCustomMenuItems],
+		CustomEndpoints:             settings[SettingKeyCustomEndpoints],
+		LinuxDoOAuthEnabled:         linuxDoEnabled,
+		DingTalkOAuthEnabled:        dingTalkEnabled,
+		WeChatOAuthEnabled:          weChatEnabled,
+		WeChatOAuthOpenEnabled:      weChatOpenEnabled,
+		WeChatOAuthMPEnabled:        weChatMPEnabled,
+		WeChatOAuthMobileEnabled:    weChatMobileEnabled,
+		BackendModeEnabled:          settings[SettingKeyBackendModeEnabled] == "true",
+		PaymentEnabled:              settings[SettingPaymentEnabled] == "true",
+		OIDCOAuthEnabled:            oidcEnabled,
+		OIDCOAuthProviderName:       oidcProviderName,
+		GitHubOAuthEnabled:          gitHubEnabled,
+		GoogleOAuthEnabled:          googleEnabled,
+		BalanceLowNotifyEnabled:     settings[SettingKeyBalanceLowNotifyEnabled] == "true",
+		AccountQuotaNotifyEnabled:   settings[SettingKeyAccountQuotaNotifyEnabled] == "true",
+		BalanceLowNotifyThreshold:   balanceLowNotifyThreshold,
+		BalanceLowNotifyRechargeURL: settings[SettingKeyBalanceLowNotifyRechargeURL],
 
 		ChannelMonitorEnabled:                !isFalseSettingValue(settings[SettingKeyChannelMonitorEnabled]),
 		ChannelMonitorPublicEnabled:          settings[SettingKeyChannelMonitorPublicEnabled] == "true",
@@ -929,6 +990,115 @@ type ChannelMonitorRuntime struct {
 // monitor switch consumed by public handlers.
 type ChannelMonitorPublicRuntime struct {
 	Enabled bool
+}
+
+// IsOpenAIRemoteCompactionV2Enabled reads the native remote compaction V2
+// switch. Missing or unreadable values fail open to preserve upgrade
+// compatibility; callers fall back to the legacy compact protocol when false.
+func (s *SettingService) IsOpenAIRemoteCompactionV2Enabled(ctx context.Context) bool {
+	if s == nil || s.settingRepo == nil {
+		return true
+	}
+	value, err := s.settingRepo.GetValue(ctx, SettingKeyOpenAIRemoteCompactionV2Enabled)
+	if err != nil {
+		return true
+	}
+	return !isFalseSettingValue(value)
+}
+
+// IsSalesPricingResolverEnabled reads the independent unified pricing
+// resolver switch. Missing or unreadable values fail open so existing
+// installations keep their configured sales_pricing_version behavior.
+func (s *SettingService) IsSalesPricingResolverEnabled(ctx context.Context) bool {
+	if s == nil || s.settingRepo == nil {
+		return true
+	}
+	now := time.Now().UnixNano()
+	if cached, ok := s.salesPricingResolverCache.Load().(*cachedSalesPricingResolver); ok && cached != nil && now < cached.expiresAt {
+		return cached.enabled
+	}
+	value, err := s.settingRepo.GetValue(ctx, SettingKeySalesPricingResolverEnabled)
+	if err != nil {
+		if cached, ok := s.salesPricingResolverCache.Load().(*cachedSalesPricingResolver); ok && cached != nil {
+			return cached.enabled
+		}
+		return true
+	}
+	enabled := !isFalseSettingValue(value)
+	s.salesPricingResolverCache.Store(&cachedSalesPricingResolver{enabled: enabled, expiresAt: time.Now().Add(salesPricingVersionCacheTTL).UnixNano()})
+	return enabled
+}
+
+// IsGroupUsageRollupEnabled reads the group usage rollup switch. A missing or
+// empty value keeps upgraded installs enabled. For a transient settings-store
+// failure, an explicit locally observed disabled state remains disabled so a
+// rollback never restarts aggregation merely because its control plane blipped.
+func (s *SettingService) IsGroupUsageRollupEnabled(ctx context.Context) bool {
+	return s.GetGroupUsageRollupRuntime(ctx).Enabled
+}
+
+// GetGroupUsageRollupRuntime reads the rollup control plane. Only a missing or
+// empty value receives the upgrade-compatible enabled default. Any other
+// first-read error is unknown and therefore paused until the setting can be
+// read; a locally confirmed value remains sticky across transient failures.
+func (s *SettingService) GetGroupUsageRollupRuntime(ctx context.Context) GroupUsageRollupRuntime {
+	if s == nil || s.settingRepo == nil {
+		return GroupUsageRollupRuntime{Enabled: true, Known: true}
+	}
+	value, err := s.settingRepo.GetValue(ctx, SettingKeyGroupUsageRollupEnabled)
+	if err != nil {
+		if errors.Is(err, ErrSettingNotFound) {
+			s.setGroupUsageRollupRuntime(true, false)
+			return GroupUsageRollupRuntime{Enabled: true, Known: true}
+		}
+		if cached := s.groupUsageRollupRuntime.Load(); cached != nil {
+			slog.Warn("group usage rollup setting unavailable; retaining last known state", "error", err)
+			return GroupUsageRollupRuntime{Enabled: cached.(*cachedGroupUsageRollupRuntime).enabled, Known: true}
+		}
+		slog.Warn("group usage rollup setting unavailable before first read; pausing rollup", "error", err)
+		return GroupUsageRollupRuntime{Known: false}
+	}
+	if strings.TrimSpace(value) == "" {
+		s.setGroupUsageRollupRuntime(true, false)
+		return GroupUsageRollupRuntime{Enabled: true, Known: true}
+	}
+	enabled := !isFalseSettingValue(value)
+	s.setGroupUsageRollupRuntime(enabled, false)
+	return GroupUsageRollupRuntime{Enabled: enabled, Known: true}
+}
+
+// RegisterGroupUsageRollupListener receives local setting writes immediately.
+// The worker also polls the database during a refresh, so other instances
+// converge without depending on an in-memory notification.
+func (s *SettingService) RegisterGroupUsageRollupListener(listener func(bool)) {
+	if s == nil || listener == nil {
+		return
+	}
+	s.groupUsageRollupListenerMu.Lock()
+	s.groupUsageRollupListeners = append(s.groupUsageRollupListeners, listener)
+	cached := s.groupUsageRollupRuntime.Load()
+	s.groupUsageRollupListenerMu.Unlock()
+	if cached != nil {
+		listener(cached.(*cachedGroupUsageRollupRuntime).enabled)
+	}
+}
+
+func (s *SettingService) setGroupUsageRollupRuntime(enabled bool, notify bool) {
+	if s == nil {
+		return
+	}
+	previous := s.groupUsageRollupRuntime.Load()
+	changed := previous == nil || previous.(*cachedGroupUsageRollupRuntime).enabled != enabled
+	s.groupUsageRollupRuntime.Store(&cachedGroupUsageRollupRuntime{enabled: enabled})
+	if !notify || !changed {
+		return
+	}
+	s.groupUsageRollupListenerMu.Lock()
+	listeners := append([]func(bool){}, s.groupUsageRollupListeners...)
+	s.groupUsageRollupListenerMu.Unlock()
+	for _, listener := range listeners {
+		listener(enabled)
+	}
 }
 
 // GetChannelMonitorRuntime reads the channel monitor feature flags directly from
@@ -1167,6 +1337,8 @@ type PublicSettingsInjectionPayload struct {
 	RegistrationEnabled              bool                     `json:"registration_enabled"`
 	EmailVerifyEnabled               bool                     `json:"email_verify_enabled"`
 	RegistrationEmailSuffixWhitelist []string                 `json:"registration_email_suffix_whitelist"`
+	RegistrationDomainLimitEnabled   bool                     `json:"registration_domain_limit_enabled"`
+	RegistrationDomainLimitPerDomain int                      `json:"registration_domain_limit_per_domain"`
 	PromoCodeEnabled                 bool                     `json:"promo_code_enabled"`
 	PasswordResetEnabled             bool                     `json:"password_reset_enabled"`
 	InvitationCodeEnabled            bool                     `json:"invitation_code_enabled"`
@@ -1234,6 +1406,8 @@ func (s *SettingService) GetPublicSettingsForInjection(ctx context.Context) (any
 		RegistrationEnabled:              settings.RegistrationEnabled,
 		EmailVerifyEnabled:               settings.EmailVerifyEnabled,
 		RegistrationEmailSuffixWhitelist: settings.RegistrationEmailSuffixWhitelist,
+		RegistrationDomainLimitEnabled:   settings.RegistrationDomainLimitEnabled,
+		RegistrationDomainLimitPerDomain: settings.RegistrationDomainLimitPerDomain,
 		PromoCodeEnabled:                 settings.PromoCodeEnabled,
 		PasswordResetEnabled:             settings.PasswordResetEnabled,
 		InvitationCodeEnabled:            settings.InvitationCodeEnabled,
@@ -1704,6 +1878,18 @@ func (s *SettingService) buildSystemSettingsUpdates(ctx context.Context, setting
 		return nil, fmt.Errorf("marshal registration email suffix whitelist: %w", err)
 	}
 	updates[SettingKeyRegistrationEmailSuffixWhitelist] = string(registrationEmailSuffixWhitelistJSON)
+	// Older internal callers may not populate the newly introduced field. Keep
+	// their existing settings payload compatible by applying the documented
+	// default; the HTTP handler preserves an explicitly supplied zero so that
+	// user input is still rejected there.
+	if settings.RegistrationDomainLimitPerDomain == 0 {
+		settings.RegistrationDomainLimitPerDomain = 3
+	}
+	if settings.RegistrationDomainLimitPerDomain < 1 || settings.RegistrationDomainLimitPerDomain > 1000 {
+		return nil, infraerrors.BadRequest("INVALID_REGISTRATION_DOMAIN_LIMIT", "registration domain limit per domain must be between 1 and 1000")
+	}
+	updates[SettingKeyRegistrationDomainLimitEnabled] = strconv.FormatBool(settings.RegistrationDomainLimitEnabled)
+	updates[SettingKeyRegistrationDomainLimitPerDomain] = strconv.Itoa(settings.RegistrationDomainLimitPerDomain)
 	updates[SettingKeyPromoCodeEnabled] = strconv.FormatBool(settings.PromoCodeEnabled)
 	updates[SettingKeyPasswordResetEnabled] = strconv.FormatBool(settings.PasswordResetEnabled)
 	updates[SettingKeyFrontendURL] = settings.FrontendURL
@@ -1933,6 +2119,22 @@ func (s *SettingService) buildSystemSettingsUpdates(ctx context.Context, setting
 	// Available channels feature switch
 	updates[SettingKeyAvailableChannelsEnabled] = strconv.FormatBool(settings.AvailableChannelsEnabled)
 	updates[SettingKeyModelSquareEnabled] = strconv.FormatBool(settings.ModelSquareEnabled)
+	updates[SettingKeyOpenAIRemoteCompactionV2Enabled] = strconv.FormatBool(settings.OpenAIRemoteCompactionV2Enabled)
+	updates[SettingKeyGroupUsageRollupEnabled] = strconv.FormatBool(settings.GroupUsageRollupEnabled)
+	updates[SettingKeySalesPricingResolverEnabled] = strconv.FormatBool(settings.SalesPricingResolverEnabled)
+	updates[SettingKeyOpenAITeamLinkedResolverEnabled] = strconv.FormatBool(settings.OpenAITeamLinkedResolverEnabled)
+	if settings.CurrentSalesPricingResolverEnabled != nil && *settings.CurrentSalesPricingResolverEnabled != settings.SalesPricingResolverEnabled {
+		reason := strings.TrimSpace(settings.SalesPricingChangeReason)
+		if len([]rune(reason)) < 5 || len([]rune(reason)) > 500 {
+			return nil, infraerrors.BadRequest("INVALID_SALES_PRICING_CHANGE_REASON", "sales_pricing_change_reason must be 5 to 500 characters when resolver setting changes")
+		}
+	}
+	if settings.CurrentOpenAITeamLinkedResolverEnabled != nil && *settings.CurrentOpenAITeamLinkedResolverEnabled != settings.OpenAITeamLinkedResolverEnabled {
+		reason := strings.TrimSpace(settings.OpenAITeamLinkedChangeReason)
+		if len([]rune(reason)) < 5 || len([]rune(reason)) > 500 {
+			return nil, infraerrors.BadRequest("INVALID_OPENAI_TEAM_LINKED_CHANGE_REASON", "openai_team_linked_change_reason must be 5 to 500 characters when resolver setting changes")
+		}
+	}
 
 	nextSalesPricingVersion := settings.SalesPricingVersion
 	if strings.TrimSpace(string(nextSalesPricingVersion)) != "" {
@@ -2094,6 +2296,9 @@ func (s *SettingService) refreshCachedSettings(settings *SystemSettings) {
 	if settings == nil {
 		return
 	}
+	s.setGroupUsageRollupRuntime(settings.GroupUsageRollupEnabled, true)
+	s.openAITeamLinkedRuntime.Store(&cachedOpenAITeamLinkedRuntime{enabled: settings.OpenAITeamLinkedResolverEnabled})
+	s.salesPricingResolverCache.Store(&cachedSalesPricingResolver{enabled: settings.SalesPricingResolverEnabled, expiresAt: time.Now().Add(salesPricingVersionCacheTTL).UnixNano()})
 	if settings.SalesPricingVersion != "" {
 		version := SalesPricingVersion(strings.ToLower(strings.TrimSpace(string(settings.SalesPricingVersion))))
 		if !version.IsValid() {
@@ -2437,6 +2642,63 @@ func (s *SettingService) GetRegistrationEmailSuffixWhitelist(ctx context.Context
 	return ParseRegistrationEmailSuffixWhitelist(value)
 }
 
+func (s *SettingService) IsRegistrationDomainLimitEnabled(ctx context.Context) bool {
+	v, err := s.settingRepo.GetValue(ctx, SettingKeyRegistrationDomainLimitEnabled)
+	return err == nil && v == "true"
+}
+
+func (s *SettingService) GetRegistrationDomainLimitPerDomain(ctx context.Context) int {
+	v, err := s.settingRepo.GetValue(ctx, SettingKeyRegistrationDomainLimitPerDomain)
+	if err == nil {
+		if n, e := strconv.Atoi(v); e == nil && n > 0 {
+			return n
+		}
+	}
+	return 3
+}
+
+var xSearchPricePattern = regexp.MustCompile(`^(?:0|[1-9][0-9]{0,9})(?:\.[0-9]{1,10})?$`)
+
+// NormalizeXSearchPrice validates the positive USD decimal used by x_search.
+// The shape matches decimal(20,10): at most ten integer and ten fractional digits.
+func NormalizeXSearchPrice(raw string) (string, error) {
+	value := strings.TrimSpace(raw)
+	if !xSearchPricePattern.MatchString(value) || strings.Trim(value, "0.") == "" || value == "0" {
+		return "", fmt.Errorf("x_search price must be a positive decimal with at most 10 fractional digits")
+	}
+	return value, nil
+}
+
+// GetXSearchPricePerRequest returns the configured price, or an empty string when unset.
+func (s *SettingService) GetXSearchPricePerRequest(ctx context.Context) (string, error) {
+	value, err := s.settingRepo.GetValue(ctx, SettingKeyXSearchPricePerRequest)
+	if err != nil {
+		if errors.Is(err, ErrSettingNotFound) {
+			return "", nil
+		}
+		return "", fmt.Errorf("get x_search price: %w", err)
+	}
+	return NormalizeXSearchPrice(value)
+}
+
+// SetXSearchPricePerRequest validates and persists the x_search unit price.
+func (s *SettingService) SetXSearchPricePerRequest(ctx context.Context, raw string) (string, error) {
+	if strings.TrimSpace(raw) == "" {
+		if err := s.settingRepo.Delete(ctx, SettingKeyXSearchPricePerRequest); err != nil && !errors.Is(err, ErrSettingNotFound) {
+			return "", fmt.Errorf("clear x_search price: %w", err)
+		}
+		return "", nil
+	}
+	value, err := NormalizeXSearchPrice(raw)
+	if err != nil {
+		return "", infraerrors.BadRequest("INVALID_X_SEARCH_PRICE", err.Error())
+	}
+	if err := s.settingRepo.Set(ctx, SettingKeyXSearchPricePerRequest, value); err != nil {
+		return "", fmt.Errorf("set x_search price: %w", err)
+	}
+	return value, nil
+}
+
 // IsPromoCodeEnabled 检查是否启用优惠码功能
 func (s *SettingService) IsPromoCodeEnabled(ctx context.Context) bool {
 	value, err := s.settingRepo.GetValue(ctx, SettingKeyPromoCodeEnabled)
@@ -2758,6 +3020,8 @@ func (s *SettingService) InitializeDefaultSettings(ctx context.Context) error {
 		SettingKeyRegistrationEnabled:                       "true",
 		SettingKeyEmailVerifyEnabled:                        "false",
 		SettingKeyRegistrationEmailSuffixWhitelist:          "[]",
+		SettingKeyRegistrationDomainLimitEnabled:            "false",
+		SettingKeyRegistrationDomainLimitPerDomain:          "3",
 		SettingKeyPromoCodeEnabled:                          "true", // 默认启用优惠码功能
 		SettingKeyLoginAgreementEnabled:                     "false",
 		SettingKeyLoginAgreementMode:                        defaultLoginAgreementMode,
@@ -2888,11 +3152,15 @@ func (s *SettingService) InitializeDefaultSettings(ctx context.Context) error {
 		SettingKeyChannelMonitorDefaultIntervalSeconds: "60",
 
 		// Available channels feature (default disabled; opt-in)
-		SettingKeyAvailableChannelsEnabled:    "false",
-		SettingKeyModelSquareEnabled:          "false",
-		SettingKeySalesPricingVersion:         string(SalesPricingVersionLegacy),
-		SettingKeySalesPricingShadowStartedAt: "",
-		SettingKeySalesPricingV2EnabledAt:     "",
+		SettingKeyAvailableChannelsEnabled:        "false",
+		SettingKeyModelSquareEnabled:              "false",
+		SettingKeyOpenAIRemoteCompactionV2Enabled: "true",
+		SettingKeyGroupUsageRollupEnabled:         "true",
+		SettingKeySalesPricingResolverEnabled:     "true",
+		SettingKeyOpenAITeamLinkedResolverEnabled: "true",
+		SettingKeySalesPricingVersion:             string(SalesPricingVersionLegacy),
+		SettingKeySalesPricingShadowStartedAt:     "",
+		SettingKeySalesPricingV2EnabledAt:         "",
 
 		// Affiliate (邀请返利) feature (default disabled; opt-in)
 		SettingKeyAffiliateEnabled: "false",
@@ -2936,9 +3204,17 @@ func (s *SettingService) parseSettings(settings map[string]string) *SystemSettin
 		apiKeyACLTrustForwardedIP = s.cfg.Security.TrustForwardedIPForAPIKeyACL
 	}
 	result := &SystemSettings{
-		RegistrationEnabled:                   settings[SettingKeyRegistrationEnabled] == "true",
-		EmailVerifyEnabled:                    emailVerifyEnabled,
-		RegistrationEmailSuffixWhitelist:      ParseRegistrationEmailSuffixWhitelist(settings[SettingKeyRegistrationEmailSuffixWhitelist]),
+		RegistrationEnabled:              settings[SettingKeyRegistrationEnabled] == "true",
+		EmailVerifyEnabled:               emailVerifyEnabled,
+		RegistrationEmailSuffixWhitelist: ParseRegistrationEmailSuffixWhitelist(settings[SettingKeyRegistrationEmailSuffixWhitelist]),
+		RegistrationDomainLimitEnabled:   settings[SettingKeyRegistrationDomainLimitEnabled] == "true",
+		RegistrationDomainLimitPerDomain: func() int {
+			n, _ := strconv.Atoi(settings[SettingKeyRegistrationDomainLimitPerDomain])
+			if n > 0 {
+				return n
+			}
+			return 3
+		}(),
 		PromoCodeEnabled:                      settings[SettingKeyPromoCodeEnabled] != "false", // 默认启用
 		PasswordResetEnabled:                  emailVerifyEnabled && settings[SettingKeyPasswordResetEnabled] == "true",
 		FrontendURL:                           settings[SettingKeyFrontendURL],
@@ -3409,6 +3685,10 @@ func (s *SettingService) parseSettings(settings map[string]string) *SystemSettin
 	// Available channels feature (default: disabled; strict true)
 	result.AvailableChannelsEnabled = settings[SettingKeyAvailableChannelsEnabled] == "true"
 	result.ModelSquareEnabled = settings[SettingKeyModelSquareEnabled] == "true"
+	result.OpenAIRemoteCompactionV2Enabled = !isFalseSettingValue(settings[SettingKeyOpenAIRemoteCompactionV2Enabled])
+	result.GroupUsageRollupEnabled = !isFalseSettingValue(settings[SettingKeyGroupUsageRollupEnabled])
+	result.SalesPricingResolverEnabled = !isFalseSettingValue(settings[SettingKeySalesPricingResolverEnabled])
+	result.OpenAITeamLinkedResolverEnabled = !isFalseSettingValue(settings[SettingKeyOpenAITeamLinkedResolverEnabled])
 	result.SalesPricingVersion = SalesPricingVersion(strings.ToLower(strings.TrimSpace(settings[SettingKeySalesPricingVersion])))
 	if !result.SalesPricingVersion.IsValid() {
 		result.SalesPricingVersion = SalesPricingVersionLegacy

@@ -190,156 +190,162 @@ func getAPIKeyGroupIDFromContext(c *gin.Context) *int64 {
 }
 
 func (s *GeminiMessagesCompatService) prepareGeminiLocalResponseCache(ctx context.Context, c *gin.Context, body []byte, model string, apiKeyID int64, groupID *int64, action string, stream bool, useUpstreamStream bool) (LocalResponseCacheLookup, LocalResponseCacheConfig) {
-	cfg := s.LocalResponseCacheConfig(ctx)
-	cacheableGenerate := action == "generateContent" && !stream && !useUpstreamStream
-	cacheableStream := action == "streamGenerateContent" && stream && useUpstreamStream
-	if !cacheableGenerate && !cacheableStream {
-		reason := "unsupported_action"
-		if stream || useUpstreamStream {
-			reason = "stream"
+	return LocalResponseCacheLookup{Reason: "disabled"}, DefaultLocalResponseCacheConfig()
+	/*
+		cfg := s.LocalResponseCacheConfig(ctx)
+		cacheableGenerate := action == "generateContent" && !stream && !useUpstreamStream
+		cacheableStream := action == "streamGenerateContent" && stream && useUpstreamStream
+		if !cacheableGenerate && !cacheableStream {
+			reason := "unsupported_action"
+			if stream || useUpstreamStream {
+				reason = "stream"
+			}
+			if cfg.Enabled && s != nil {
+				s.RecordLocalResponseCacheStat(ctx, "lookup_bypass:"+reason)
+			}
+			return LocalResponseCacheLookup{Reason: reason}, cfg
 		}
-		if cfg.Enabled && s != nil {
-			s.RecordLocalResponseCacheStat(ctx, "lookup_bypass:"+reason)
+		explicitBypass := false
+		headers := http.Header{}
+		if c != nil && c.Request != nil {
+			explicitBypass = strings.EqualFold(strings.TrimSpace(c.GetHeader("X-Sub2API-Cache-Control")), "bypass")
+			headers = c.Request.Header.Clone()
 		}
-		return LocalResponseCacheLookup{Reason: reason}, cfg
-	}
-	explicitBypass := false
-	headers := http.Header{}
-	if c != nil && c.Request != nil {
-		explicitBypass = strings.EqualFold(strings.TrimSpace(c.GetHeader("X-Sub2API-Cache-Control")), "bypass")
-		headers = c.Request.Header.Clone()
-	}
-	if strings.TrimSpace(headers.Get("Content-Type")) == "" {
-		headers.Set("Content-Type", "application/json")
-	}
-	endpoint := "/v1beta/models/:model:generateContent"
-	if cacheableStream {
-		endpoint = "/v1beta/models/:model:streamGenerateContent"
-	}
-	lookup := BuildLocalResponseCacheLookupWithOptions(cfg, apiKeyID, groupID, endpoint, PlatformGemini, model, body, explicitBypass, LocalResponseCacheKeyOptions{
-		Headers: LocalResponseCacheKeyHeadersFromHTTP(headers),
-	})
-	if lookup.Key == "" && cfg.Enabled && s != nil {
-		s.RecordLocalResponseCacheStat(ctx, "lookup_bypass:"+lookup.Reason)
-	}
-	return lookup, cfg
+		if strings.TrimSpace(headers.Get("Content-Type")) == "" {
+			headers.Set("Content-Type", "application/json")
+		}
+		endpoint := "/v1beta/models/:model:generateContent"
+		if cacheableStream {
+			endpoint = "/v1beta/models/:model:streamGenerateContent"
+		}
+		lookup := BuildLocalResponseCacheLookupWithOptions(cfg, apiKeyID, groupID, endpoint, PlatformGemini, model, body, explicitBypass, LocalResponseCacheKeyOptions{
+			Headers: LocalResponseCacheKeyHeadersFromHTTP(headers),
+		})
+		if lookup.Key == "" && cfg.Enabled && s != nil {
+			s.RecordLocalResponseCacheStat(ctx, "lookup_bypass:"+lookup.Reason)
+		}
+		return lookup, cfg */
 }
 
 func (s *GeminiMessagesCompatService) tryWriteGeminiLocalResponseCacheHit(ctx context.Context, c *gin.Context, lookup LocalResponseCacheLookup, requestStream bool) (*ClaudeUsage, bool) {
-	if lookup.Key == "" {
-		return nil, false
-	}
-	entry, err := s.GetLocalResponseCache(ctx, lookup.Key)
-	if err != nil && strings.TrimSpace(lookup.LegacyKey) != "" {
-		entry, err = s.GetLocalResponseCache(ctx, lookup.LegacyKey)
-	}
-	if err != nil || entry == nil || len(entry.Body) == 0 {
-		if s != nil {
-			s.RecordLocalResponseCacheStat(ctx, "lookup_miss")
+	return nil, false
+	/*
+		if lookup.Key == "" {
+			return nil, false
 		}
-		return nil, false
-	}
-	if !isGeminiLocalResponseCacheEntryCompatible(requestStream, entry.ContentType) {
-		if s != nil {
-			s.RecordLocalResponseCacheStat(ctx, "lookup_miss:content_type_mismatch")
+		entry, err := s.GetLocalResponseCache(ctx, lookup.Key)
+		if err != nil && strings.TrimSpace(lookup.LegacyKey) != "" {
+			entry, err = s.GetLocalResponseCache(ctx, lookup.LegacyKey)
 		}
-		return nil, false
-	}
-	if c != nil {
-		for k, v := range entry.Headers {
-			if strings.TrimSpace(k) != "" && strings.TrimSpace(v) != "" {
-				c.Header(k, v)
+		if err != nil || entry == nil || len(entry.Body) == 0 {
+			if s != nil {
+				s.RecordLocalResponseCacheStat(ctx, "lookup_miss")
 			}
+			return nil, false
 		}
-		contentType := entry.ContentType
-		if contentType == "" {
-			contentType = "application/json"
+		if !isGeminiLocalResponseCacheEntryCompatible(requestStream, entry.ContentType) {
+			if s != nil {
+				s.RecordLocalResponseCacheStat(ctx, "lookup_miss:content_type_mismatch")
+			}
+			return nil, false
 		}
-		c.Header("Content-Type", contentType)
-		c.Header(LocalResponseCacheHeader, LocalResponseCacheHeaderHit)
-		status := entry.StatusCode
-		if status == 0 {
-			status = http.StatusOK
+		if c != nil {
+			for k, v := range entry.Headers {
+				if strings.TrimSpace(k) != "" && strings.TrimSpace(v) != "" {
+					c.Header(k, v)
+				}
+			}
+			contentType := entry.ContentType
+			if contentType == "" {
+				contentType = "application/json"
+			}
+			c.Header("Content-Type", contentType)
+			c.Header(LocalResponseCacheHeader, LocalResponseCacheHeaderHit)
+			status := entry.StatusCode
+			if status == 0 {
+				status = http.StatusOK
+			}
+			c.Data(status, contentType, entry.Body)
 		}
-		c.Data(status, contentType, entry.Body)
-	}
-	usage := parseGeminiUsageFromCachedLocalResponse(entry.ContentType, entry.Body)
-	if s != nil {
-		s.RecordLocalResponseCacheStat(ctx, "lookup_hit")
-		hitTokens := int64(0)
-		if usage != nil {
-			hitTokens = int64(usage.InputTokens + usage.OutputTokens)
+		usage := parseGeminiUsageFromCachedLocalResponse(entry.ContentType, entry.Body)
+		if s != nil {
+			s.RecordLocalResponseCacheStat(ctx, "lookup_hit")
+			hitTokens := int64(0)
+			if usage != nil {
+				hitTokens = int64(usage.InputTokens + usage.OutputTokens)
+			}
+			s.RecordLocalResponseCacheHotspot(ctx, lookup, hitTokens)
 		}
-		s.RecordLocalResponseCacheHotspot(ctx, lookup, hitTokens)
-	}
-	return usage, true
+		return usage, true */
 }
 
 func (s *GeminiMessagesCompatService) persistGeminiLocalResponseCache(ctx context.Context, c *gin.Context, lookup LocalResponseCacheLookup, cfg LocalResponseCacheConfig, requestBody []byte, status int, contentType string, body []byte, requestStream bool) {
-	if lookup.Key == "" {
-		return
-	}
-	if status != http.StatusOK || len(body) == 0 {
-		if s != nil {
-			if status != http.StatusOK {
-				s.RecordLocalResponseCacheStat(ctx, "store_skip:status_not_ok")
-			} else {
-				s.RecordLocalResponseCacheStat(ctx, "store_skip:empty_body")
+	return
+	/*
+		if lookup.Key == "" {
+			return
+		}
+		if status != http.StatusOK || len(body) == 0 {
+			if s != nil {
+				if status != http.StatusOK {
+					s.RecordLocalResponseCacheStat(ctx, "store_skip:status_not_ok")
+				} else {
+					s.RecordLocalResponseCacheStat(ctx, "store_skip:empty_body")
+				}
 			}
+			return
 		}
-		return
-	}
-	if cfg.MaxBodySize > 0 && len(body) > cfg.MaxBodySize {
+		if cfg.MaxBodySize > 0 && len(body) > cfg.MaxBodySize {
+			if s != nil {
+				s.RecordLocalResponseCacheStat(ctx, "store_skip:body_too_large")
+			}
+			return
+		}
+		if !isGeminiLocalResponseCacheEntryCompatible(requestStream, contentType) {
+			if s != nil {
+				s.RecordLocalResponseCacheStat(ctx, "store_skip:content_type")
+			}
+			return
+		}
+		entry := &LocalResponseCacheEntry{
+			StatusCode:  status,
+			ContentType: contentType,
+			Body:        append([]byte(nil), body...),
+			Headers: map[string]string{
+				"Content-Type": contentType,
+			},
+			CreatedAt: time.Now(),
+			Platform:  lookup.Platform,
+			Model:     lookup.Model,
+			GroupID:   lookup.GroupID,
+			APIKeyID:  lookup.APIKeyID,
+		}
+		if setErr := s.SetLocalResponseCache(ctx, lookup.Key, entry, cfg.TTL); setErr != nil {
+			if s != nil {
+				s.RecordLocalResponseCacheStat(ctx, "store_failed")
+			}
+			return
+		}
+		if c != nil {
+			c.Header(LocalResponseCacheHeader, LocalResponseCacheHeaderMiss)
+		}
 		if s != nil {
-			s.RecordLocalResponseCacheStat(ctx, "store_skip:body_too_large")
-		}
-		return
-	}
-	if !isGeminiLocalResponseCacheEntryCompatible(requestStream, contentType) {
-		if s != nil {
-			s.RecordLocalResponseCacheStat(ctx, "store_skip:content_type")
-		}
-		return
-	}
-	entry := &LocalResponseCacheEntry{
-		StatusCode:  status,
-		ContentType: contentType,
-		Body:        append([]byte(nil), body...),
-		Headers: map[string]string{
-			"Content-Type": contentType,
-		},
-		CreatedAt: time.Now(),
-		Platform:  lookup.Platform,
-		Model:     lookup.Model,
-		GroupID:   lookup.GroupID,
-		APIKeyID:  lookup.APIKeyID,
-	}
-	if setErr := s.SetLocalResponseCache(ctx, lookup.Key, entry, cfg.TTL); setErr != nil {
-		if s != nil {
-			s.RecordLocalResponseCacheStat(ctx, "store_failed")
-		}
-		return
-	}
-	if c != nil {
-		c.Header(LocalResponseCacheHeader, LocalResponseCacheHeaderMiss)
-	}
-	if s != nil {
-		s.RecordLocalResponseCacheStat(ctx, "store_success")
-		if s.semanticCacheWriter != nil {
-			s.semanticCacheWriter.Enqueue(SemanticCacheWriteRequest{
-				Protocol:         PlatformGemini,
-				RequestBody:      requestBody,
-				ResponseCacheKey: lookup.Key,
-				Platform:         lookup.Platform,
-				Model:            lookup.Model,
-				APIKeyID:         lookup.APIKeyID,
-				UserID:           SemanticCacheUserIDFromContext(c),
-				GroupID:          lookup.GroupID,
-				TTL:              cfg.TTL,
-				StoredAt:         entry.CreatedAt,
-			})
-		}
-	}
+			s.RecordLocalResponseCacheStat(ctx, "store_success")
+			if s.semanticCacheWriter != nil {
+				s.semanticCacheWriter.Enqueue(SemanticCacheWriteRequest{
+					Protocol:         PlatformGemini,
+					RequestBody:      requestBody,
+					ResponseCacheKey: lookup.Key,
+					Platform:         lookup.Platform,
+					Model:            lookup.Model,
+					APIKeyID:         lookup.APIKeyID,
+					UserID:           SemanticCacheUserIDFromContext(c),
+					GroupID:          lookup.GroupID,
+					TTL:              cfg.TTL,
+					StoredAt:         entry.CreatedAt,
+				})
+			}
+		} */
 }
 
 func isGeminiLocalResponseCacheEntryCompatible(requestStream bool, contentType string) bool {
@@ -1438,28 +1444,6 @@ func (s *GeminiMessagesCompatService) ForwardNative(ctx context.Context, c *gin.
 	}
 	forceAIStudio := action == "countTokens"
 
-	localCacheLookup, localCacheCfg := s.prepareGeminiLocalResponseCache(ctx, c, body, mappedModel, getAPIKeyIDFromContext(c), getAPIKeyGroupIDFromContext(c), action, stream, useUpstreamStream)
-	if usage, ok := s.tryWriteGeminiLocalResponseCacheHit(ctx, c, localCacheLookup, stream); ok {
-		return &ForwardResult{
-			RequestID:     "",
-			Usage:         *usage,
-			Model:         originalModel,
-			UpstreamModel: mappedModel,
-			Stream:        stream,
-			Duration:      time.Since(startTime),
-		}, nil
-	}
-	if localCacheLookup.Key != "" {
-		_ = s.probeSemanticCacheCandidate(ctx, SemanticCacheLookupRequest{
-			RequestBody: body,
-			Platform:    localCacheLookup.Platform,
-			Model:       localCacheLookup.Model,
-			APIKeyID:    localCacheLookup.APIKeyID,
-			UserID:      SemanticCacheUserIDFromContext(c),
-			GroupID:     localCacheLookup.GroupID,
-		})
-	}
-
 	var requestIDHeader string
 	var buildReq func(ctx context.Context) (*http.Request, string, error)
 
@@ -1878,19 +1862,12 @@ func (s *GeminiMessagesCompatService) ForwardNative(ctx context.Context, c *gin.
 	var firstTokenMs *int
 
 	if stream {
-		streamRes, err := s.handleNativeStreamingResponse(c, resp, startTime, isOAuth, localCacheCfg.MaxBodySize)
+		streamRes, err := s.handleNativeStreamingResponse(c, resp, startTime, isOAuth)
 		if err != nil {
 			return nil, err
 		}
 		usage = streamRes.usage
 		firstTokenMs = streamRes.firstTokenMs
-		if localCacheLookup.Key != "" && streamRes.cacheBodyTooLarge {
-			s.RecordLocalResponseCacheStat(ctx, "store_skip:body_too_large")
-		} else if localCacheLookup.Key != "" && !streamRes.cacheComplete {
-			s.RecordLocalResponseCacheStat(ctx, "store_skip:stream_incomplete")
-		} else if streamRes.cacheComplete && len(streamRes.cacheBody) > 0 {
-			s.persistGeminiLocalResponseCache(ctx, c, localCacheLookup, localCacheCfg, body, resp.StatusCode, streamRes.cacheContentType, streamRes.cacheBody, true)
-		}
 	} else {
 		if useUpstreamStream {
 			collected, usageObj, err := collectGeminiSSE(resp.Body, isOAuth)
@@ -1901,12 +1878,11 @@ func (s *GeminiMessagesCompatService) ForwardNative(ctx context.Context, c *gin.
 			c.Data(http.StatusOK, "application/json", b)
 			usage = usageObj
 		} else {
-			usageResp, responseBody, contentType, err := s.handleNativeNonStreamingResponseWithBody(c, resp, isOAuth)
+			usageResp, _, _, err := s.handleNativeNonStreamingResponseWithBody(c, resp, isOAuth)
 			if err != nil {
 				return nil, err
 			}
 			usage = usageResp
-			s.persistGeminiLocalResponseCache(ctx, c, localCacheLookup, localCacheCfg, body, resp.StatusCode, contentType, responseBody, false)
 		}
 	}
 
@@ -2720,12 +2696,8 @@ func mergeCollectedTextParts(response map[string]any, textParts []string) map[st
 }
 
 type geminiNativeStreamResult struct {
-	usage             *ClaudeUsage
-	firstTokenMs      *int
-	cacheBody         []byte
-	cacheContentType  string
-	cacheComplete     bool
-	cacheBodyTooLarge bool
+	usage        *ClaudeUsage
+	firstTokenMs *int
 }
 
 func isGeminiInsufficientScope(headers http.Header, body []byte) bool {
@@ -2836,7 +2808,7 @@ func (s *GeminiMessagesCompatService) handleNativeNonStreamingResponseWithBody(c
 	return &ClaudeUsage{}, respBody, contentType, nil
 }
 
-func (s *GeminiMessagesCompatService) handleNativeStreamingResponse(c *gin.Context, resp *http.Response, startTime time.Time, isOAuth bool, cacheMaxBodySize int) (*geminiNativeStreamResult, error) {
+func (s *GeminiMessagesCompatService) handleNativeStreamingResponse(c *gin.Context, resp *http.Response, startTime time.Time, isOAuth bool) (*geminiNativeStreamResult, error) {
 	if s.cfg != nil && s.cfg.Gateway.GeminiDebugResponseHeaders {
 		logger.LegacyPrintf("service.gemini_messages_compat", "[GeminiAPI] ========== Streaming Response Headers ==========")
 		for key, values := range resp.Header {
@@ -2870,23 +2842,9 @@ func (s *GeminiMessagesCompatService) handleNativeStreamingResponse(c *gin.Conte
 	reader := bufio.NewReader(resp.Body)
 	usage := &ClaudeUsage{}
 	var firstTokenMs *int
-	var cacheBody bytes.Buffer
-	cacheBodyTooLarge := false
-	cacheComplete := false
-
-	writeAndCapture := func(data string) error {
-		if _, err := io.WriteString(c.Writer, data); err != nil {
-			return err
-		}
-		if !cacheBodyTooLarge {
-			if cacheMaxBodySize > 0 && cacheBody.Len()+len(data) > cacheMaxBodySize {
-				cacheBody.Reset()
-				cacheBodyTooLarge = true
-			} else {
-				_, _ = cacheBody.WriteString(data)
-			}
-		}
-		return nil
+	write := func(data string) error {
+		_, err := io.WriteString(c.Writer, data)
+		return err
 	}
 
 	for {
@@ -2897,10 +2855,7 @@ func (s *GeminiMessagesCompatService) handleNativeStreamingResponse(c *gin.Conte
 				payload := strings.TrimSpace(strings.TrimPrefix(trimmed, "data:"))
 				// Keepalive / done markers
 				if payload == "" || payload == "[DONE]" {
-					if payload == "[DONE]" {
-						cacheComplete = true
-					}
-					if err := writeAndCapture(line); err != nil {
+					if err := write(line); err != nil {
 						return nil, err
 					}
 					flusher.Flush()
@@ -2922,11 +2877,6 @@ func (s *GeminiMessagesCompatService) handleNativeStreamingResponse(c *gin.Conte
 					if u := extractGeminiUsage(rawBytes); u != nil {
 						usage = u
 					}
-					var parsed map[string]any
-					if len(rawBytes) > 0 && json.Unmarshal(rawBytes, &parsed) == nil && extractGeminiFinishReason(parsed) != "" {
-						cacheComplete = true
-					}
-
 					if firstTokenMs == nil {
 						ms := int(time.Since(startTime).Milliseconds())
 						firstTokenMs = &ms
@@ -2934,19 +2884,19 @@ func (s *GeminiMessagesCompatService) handleNativeStreamingResponse(c *gin.Conte
 
 					if isOAuth {
 						// SSE format requires double newline (\n\n) to separate events
-						if err := writeAndCapture(fmt.Sprintf("data: %s\n\n", rawToWrite)); err != nil {
+						if err := write(fmt.Sprintf("data: %s\n\n", rawToWrite)); err != nil {
 							return nil, err
 						}
 					} else {
 						// Pass-through for AI Studio responses.
-						if err := writeAndCapture(line); err != nil {
+						if err := write(line); err != nil {
 							return nil, err
 						}
 					}
 					flusher.Flush()
 				}
 			} else {
-				if err := writeAndCapture(line); err != nil {
+				if err := write(line); err != nil {
 					return nil, err
 				}
 				flusher.Flush()
@@ -2962,14 +2912,8 @@ func (s *GeminiMessagesCompatService) handleNativeStreamingResponse(c *gin.Conte
 	}
 
 	result := &geminiNativeStreamResult{
-		usage:             usage,
-		firstTokenMs:      firstTokenMs,
-		cacheContentType:  contentType,
-		cacheComplete:     cacheComplete,
-		cacheBodyTooLarge: cacheBodyTooLarge,
-	}
-	if cacheComplete && !cacheBodyTooLarge && cacheBody.Len() > 0 {
-		result.cacheBody = append([]byte(nil), cacheBody.Bytes()...)
+		usage:        usage,
+		firstTokenMs: firstTokenMs,
 	}
 	return result, nil
 }

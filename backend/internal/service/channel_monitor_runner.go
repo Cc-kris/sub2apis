@@ -67,6 +67,7 @@ type ChannelMonitorRunner struct {
 type scheduledMonitor struct {
 	id       int64
 	name     string
+	mode     string
 	interval time.Duration
 	cancel   context.CancelFunc
 }
@@ -164,6 +165,7 @@ func (r *ChannelMonitorRunner) Schedule(m *ChannelMonitor) {
 	task := &scheduledMonitor{
 		id:       m.ID,
 		name:     m.Name,
+		mode:     defaultMonitorMode(m.Mode),
 		interval: interval,
 		cancel:   cancel,
 	}
@@ -215,7 +217,9 @@ func (r *ChannelMonitorRunner) Stop() {
 func (r *ChannelMonitorRunner) runScheduled(ctx context.Context, task *scheduledMonitor) {
 	defer r.wg.Done()
 
-	r.fire(ctx, task)
+	if task.mode == MonitorModeActive {
+		r.fire(ctx, task)
+	}
 
 	ticker := time.NewTicker(task.interval)
 	defer ticker.Stop()
@@ -224,7 +228,9 @@ func (r *ChannelMonitorRunner) runScheduled(ctx context.Context, task *scheduled
 		case <-ctx.Done():
 			return
 		case <-ticker.C:
-			r.fire(ctx, task)
+			if task.mode == MonitorModeActive {
+				r.fire(ctx, task)
+			}
 		}
 	}
 }

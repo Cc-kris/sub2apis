@@ -753,6 +753,26 @@ func (_u *GroupUpdate) AddRpmLimit(v int) *GroupUpdate {
 	return _u
 }
 
+// SetLongContextPricingEnabled sets the "long_context_pricing_enabled" field.
+func (_u *GroupUpdate) SetLongContextPricingEnabled(v bool) *GroupUpdate {
+	_u.mutation.SetLongContextPricingEnabled(v)
+	return _u
+}
+
+// SetNillableLongContextPricingEnabled sets the "long_context_pricing_enabled" field if the given value is not nil.
+func (_u *GroupUpdate) SetNillableLongContextPricingEnabled(v *bool) *GroupUpdate {
+	if v != nil {
+		_u.SetLongContextPricingEnabled(*v)
+	}
+	return _u
+}
+
+// SetModelPricing sets the "model_pricing" field.
+func (_u *GroupUpdate) SetModelPricing(v map[string]interface{}) *GroupUpdate {
+	_u.mutation.SetModelPricing(v)
+	return _u
+}
+
 // AddAPIKeyIDs adds the "api_keys" edge to the APIKey entity by IDs.
 func (_u *GroupUpdate) AddAPIKeyIDs(ids ...int64) *GroupUpdate {
 	_u.mutation.AddAPIKeyIDs(ids...)
@@ -1269,6 +1289,12 @@ func (_u *GroupUpdate) sqlSave(ctx context.Context) (_node int, err error) {
 	}
 	if value, ok := _u.mutation.AddedRpmLimit(); ok {
 		_spec.AddField(group.FieldRpmLimit, field.TypeInt, value)
+	}
+	if value, ok := _u.mutation.LongContextPricingEnabled(); ok {
+		_spec.SetField(group.FieldLongContextPricingEnabled, field.TypeBool, value)
+	}
+	if value, ok := _u.mutation.ModelPricing(); ok {
+		_spec.SetField(group.FieldModelPricing, field.TypeJSON, value)
 	}
 	if _u.mutation.APIKeysCleared() {
 		edge := &sqlgraph.EdgeSpec{
@@ -2301,6 +2327,26 @@ func (_u *GroupUpdateOne) AddRpmLimit(v int) *GroupUpdateOne {
 	return _u
 }
 
+// SetLongContextPricingEnabled sets the "long_context_pricing_enabled" field.
+func (_u *GroupUpdateOne) SetLongContextPricingEnabled(v bool) *GroupUpdateOne {
+	_u.mutation.SetLongContextPricingEnabled(v)
+	return _u
+}
+
+// SetNillableLongContextPricingEnabled sets the "long_context_pricing_enabled" field if the given value is not nil.
+func (_u *GroupUpdateOne) SetNillableLongContextPricingEnabled(v *bool) *GroupUpdateOne {
+	if v != nil {
+		_u.SetLongContextPricingEnabled(*v)
+	}
+	return _u
+}
+
+// SetModelPricing sets the "model_pricing" field.
+func (_u *GroupUpdateOne) SetModelPricing(v map[string]interface{}) *GroupUpdateOne {
+	_u.mutation.SetModelPricing(v)
+	return _u
+}
+
 // AddAPIKeyIDs adds the "api_keys" edge to the APIKey entity by IDs.
 func (_u *GroupUpdateOne) AddAPIKeyIDs(ids ...int64) *GroupUpdateOne {
 	_u.mutation.AddAPIKeyIDs(ids...)
@@ -2847,6 +2893,12 @@ func (_u *GroupUpdateOne) sqlSave(ctx context.Context) (_node *Group, err error)
 	}
 	if value, ok := _u.mutation.AddedRpmLimit(); ok {
 		_spec.AddField(group.FieldRpmLimit, field.TypeInt, value)
+	}
+	if value, ok := _u.mutation.LongContextPricingEnabled(); ok {
+		_spec.SetField(group.FieldLongContextPricingEnabled, field.TypeBool, value)
+	}
+	if value, ok := _u.mutation.ModelPricing(); ok {
+		_spec.SetField(group.FieldModelPricing, field.TypeJSON, value)
 	}
 	if _u.mutation.APIKeysCleared() {
 		edge := &sqlgraph.EdgeSpec{

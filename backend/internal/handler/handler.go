@@ -38,8 +38,6 @@ type AdminHandlers struct {
 	ContentModeration       *admin.ContentModerationHandler
 	Payment                 *admin.PaymentHandler
 	Affiliate               *admin.AffiliateHandler
-	CacheConfig             *admin.CacheConfigHandler
-	CacheStats              *admin.CacheStatsHandler
 	Upstream                *admin.UpstreamHandler
 	UpstreamWallet          *admin.UpstreamWalletHandler
 	UpstreamFinanceProtocol *admin.UpstreamFinanceProtocolHandler

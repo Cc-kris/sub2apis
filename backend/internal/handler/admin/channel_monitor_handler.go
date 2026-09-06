@@ -37,7 +37,9 @@ func NewChannelMonitorHandler(monitorService *service.ChannelMonitorService) *Ch
 
 type channelMonitorCreateRequest struct {
 	Name             string            `json:"name" binding:"required,max=100"`
-	Provider         string            `json:"provider" binding:"required,oneof=openai anthropic gemini grok"`
+	Provider         string            `json:"provider" binding:"required"`
+	Mode             string            `json:"mode" binding:"omitempty,oneof=active passive quota"`
+	AccountID        *int64            `json:"account_id"`
 	APIMode          string            `json:"api_mode" binding:"omitempty,oneof=chat_completions responses"`
 	Endpoint         string            `json:"endpoint" binding:"required,max=500"`
 	APIKey           string            `json:"api_key" binding:"required,max=2000"`
@@ -54,7 +56,9 @@ type channelMonitorCreateRequest struct {
 
 type channelMonitorUpdateRequest struct {
 	Name             *string            `json:"name" binding:"omitempty,max=100"`
-	Provider         *string            `json:"provider" binding:"omitempty,oneof=openai anthropic gemini grok"`
+	Provider         *string            `json:"provider" binding:"omitempty"`
+	Mode             *string            `json:"mode" binding:"omitempty,oneof=active passive quota"`
+	AccountID        **int64            `json:"account_id"`
 	APIMode          *string            `json:"api_mode" binding:"omitempty,oneof=chat_completions responses"`
 	Endpoint         *string            `json:"endpoint" binding:"omitempty,max=500"`
 	APIKey           *string            `json:"api_key" binding:"omitempty,max=2000"`
@@ -74,6 +78,8 @@ type channelMonitorResponse struct {
 	ID                  int64                                `json:"id"`
 	Name                string                               `json:"name"`
 	Provider            string                               `json:"provider"`
+	Mode                string                               `json:"mode"`
+	AccountID           *int64                               `json:"account_id,omitempty"`
 	APIMode             string                               `json:"api_mode"`
 	Endpoint            string                               `json:"endpoint"`
 	APIKeyMasked        string                               `json:"api_key_masked"`
@@ -92,10 +98,11 @@ type channelMonitorResponse struct {
 	Availability7d      float64                              `json:"availability_7d"`
 	ExtraModelsStatus   []dto.ChannelMonitorExtraModelStatus `json:"extra_models_status"`
 	// 请求自定义快照：前端编辑 / 展示「高级设置」用
-	TemplateID       *int64            `json:"template_id"`
-	ExtraHeaders     map[string]string `json:"extra_headers"`
-	BodyOverrideMode string            `json:"body_override_mode"`
-	BodyOverride     map[string]any    `json:"body_override"`
+	TemplateID       *int64                               `json:"template_id"`
+	ExtraHeaders     map[string]string                    `json:"extra_headers"`
+	BodyOverrideMode string                               `json:"body_override_mode"`
+	BodyOverride     map[string]any                       `json:"body_override"`
+	QuotaSnapshot    *service.ChannelMonitorQuotaSnapshot `json:"quota_snapshot,omitempty"`
 }
 
 type channelMonitorCheckResultResponse struct {
@@ -132,6 +139,14 @@ func maskAPIKey(plain string) string {
 	return plain[:monitorAPIKeyMaskPrefix] + monitorAPIKeyMaskSuffix
 }
 
+func defaultMonitorMode(mode string) string {
+	mode = strings.TrimSpace(mode)
+	if mode == "" {
+		return service.MonitorModeActive
+	}
+	return mode
+}
+
 func channelMonitorToResponse(m *service.ChannelMonitor) *channelMonitorResponse {
 	if m == nil {
 		return nil
@@ -148,6 +163,8 @@ func channelMonitorToResponse(m *service.ChannelMonitor) *channelMonitorResponse
 		ID:                  m.ID,
 		Name:                m.Name,
 		Provider:            m.Provider,
+		Mode:                defaultMonitorMode(m.Mode),
+		AccountID:           m.AccountID,
 		APIMode:             m.APIMode,
 		Endpoint:            m.Endpoint,
 		APIKeyMasked:        maskAPIKey(m.APIKey),
@@ -247,9 +264,21 @@ func (h *ChannelMonitorHandler) List(c *gin.Context) {
 	summaries := h.batchSummaryFor(c, items)
 	out := make([]*channelMonitorResponse, 0, len(items))
 	for _, m := range items {
-		out = append(out, buildListItemResponse(m, summaries[m.ID]))
+		item := buildListItemResponse(m, summaries[m.ID])
+		item.QuotaSnapshot = h.monitorService.GetQuotaSnapshot(c.Request.Context(), m)
+		out = append(out, item)
 	}
 	response.Paginated(c, out, total, page, pageSize)
+}
+
+func (h *ChannelMonitorHandler) SearchAccounts(c *gin.Context) {
+	page, pageSize := response.ParsePagination(c)
+	items, total, err := h.monitorService.SearchAccounts(c.Request.Context(), c.Query("provider"), c.Query("search"), page, pageSize)
+	if err != nil {
+		response.ErrorFrom(c, err)
+		return
+	}
+	response.Success(c, gin.H{"items": items, "total": total, "page": page, "page_size": pageSize})
 }
 
 // batchSummaryFor 批量聚合 latest + 7d 可用率，避免每行 2 次 SQL（消除 N+1）。
@@ -293,7 +322,9 @@ func (h *ChannelMonitorHandler) Get(c *gin.Context) {
 		response.ErrorFrom(c, err)
 		return
 	}
-	response.Success(c, channelMonitorToResponse(m))
+	resp := channelMonitorToResponse(m)
+	resp.QuotaSnapshot = h.monitorService.GetQuotaSnapshot(c.Request.Context(), m)
+	response.Success(c, resp)
 }
 
 // Create POST /api/v1/admin/channel-monitors
@@ -314,6 +345,8 @@ func (h *ChannelMonitorHandler) Create(c *gin.Context) {
 	m, err := h.monitorService.Create(c.Request.Context(), service.ChannelMonitorCreateParams{
 		Name:             req.Name,
 		Provider:         req.Provider,
+		Mode:             req.Mode,
+		AccountID:        req.AccountID,
 		APIMode:          req.APIMode,
 		Endpoint:         req.Endpoint,
 		APIKey:           req.APIKey,
@@ -332,7 +365,9 @@ func (h *ChannelMonitorHandler) Create(c *gin.Context) {
 		response.ErrorFrom(c, err)
 		return
 	}
-	response.Created(c, channelMonitorToResponse(m))
+	resp := channelMonitorToResponse(m)
+	resp.QuotaSnapshot = h.monitorService.GetQuotaSnapshot(c.Request.Context(), m)
+	response.Created(c, resp)
 }
 
 // CreateFromAccounts POST /api/v1/admin/channel-monitors/import-accounts
@@ -366,6 +401,8 @@ func (h *ChannelMonitorHandler) Update(c *gin.Context) {
 	m, err := h.monitorService.Update(c.Request.Context(), id, service.ChannelMonitorUpdateParams{
 		Name:             req.Name,
 		Provider:         req.Provider,
+		Mode:             req.Mode,
+		AccountID:        req.AccountID,
 		APIMode:          req.APIMode,
 		Endpoint:         req.Endpoint,
 		APIKey:           req.APIKey,

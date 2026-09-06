@@ -710,6 +710,8 @@ export default {
   "usage": {
     "title": "Использование записей",
     "description": "Просмотр и анализ истории использования API",
+    "tabs": { "label": "Представления использования", "details": "Детали", "errors": "Ошибочные запросы", "ranking": "Рейтинг токенов", "errorsHint": "Откройте единое представление ошибок для анализа неудачных запросов и классификации SLA.", "openErrors": "Открыть ошибки" },
+    "tokenRanking": { "title": "Рейтинг токенов пользователей", "range": "{start} — {end}", "user": "Пользователь", "failed": "Не удалось загрузить рейтинг", "empty": "За этот период использования токенов нет" },
     "costDetails": "Расход средств",
     "tokenDetails": "Token Breakdown скачать",
     "cacheTtlOverriddenHint": "Cache TTL Овертайд включен",
@@ -757,6 +759,8 @@ export default {
     "cost": "Стоимость",
     "firstToken": "Первый токен",
     "duration": "Продолжительность",
+    "firstTokenShort": "Первый",
+    "durationTotal": "Итого",
     "time": "Время",
     "ws": "WS",
     "stream": "поток",
@@ -814,7 +818,20 @@ export default {
     "providers": {
       "openai": "OpenAI",
       "anthropic": "антропный",
-      "gemini": "Близнецы"
+      "gemini": "Близнецы",
+      "grok": "Grok",
+      "antigravity": "Antigravity",
+      "kimi": "Kimi",
+      "zhipu": "Zhipu",
+      "deepseek": "DeepSeek"
+    },
+    "quotaState": {
+      "fresh": "Квота актуальна",
+      "stale": "Квота устарела",
+      "failed": "Ошибка квоты",
+      "unknown": "Квота неизвестна",
+      "observed": "Квота наблюдается",
+      "billing_observed": "Наблюдается биллинг"
     },
     "extraModelsHeader": "Дополнительные модели",
     "extraModelsEmpty": "Никаких дополнительных моделей",
@@ -1081,6 +1098,7 @@ export default {
     "securityDescription": "Пароль, двухфакторная аутентификация и оповещения живут в правильном направлении.",
     "administrator": "Администратор",
     "user": "Пользователь",
+    "unknownRole": "Неизвестно ({role})",
     "username": "Имя пользователя",
     "email": "Электронная почта",
     "status": "статус",

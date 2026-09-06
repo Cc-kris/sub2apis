@@ -2,6 +2,7 @@ package service
 
 import (
 	"context"
+	"fmt"
 	"sync"
 	"time"
 
@@ -90,6 +91,7 @@ func (s *ScheduledTestRunnerService) runScheduled() {
 
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Minute)
 	defer cancel()
+	s.runDueTeamProbes(ctx)
 
 	now := time.Now()
 	plans, err := s.planRepo.ListDue(ctx, now)
@@ -119,11 +121,81 @@ func (s *ScheduledTestRunnerService) runScheduled() {
 	wg.Wait()
 }
 
+// runDueTeamProbes is a plan-independent recovery lane for OpenAI Team
+// workspace blocks. A due workspace must be retried even when an operator has
+// not created a scheduled test plan for any of its accounts.
+func (s *ScheduledTestRunnerService) runDueTeamProbes(ctx context.Context) {
+	if s == nil || s.rateLimitSvc == nil || s.accountTestSvc == nil {
+		return
+	}
+	targets, err := s.rateLimitSvc.ListDueOpenAITeamProbeTargets(ctx, scheduledTestDefaultMaxWorkers)
+	if err != nil {
+		logger.LegacyPrintf("service.scheduled_test_runner", "[ScheduledTestRunner] ListDueOpenAITeamProbeTargets error: %v", err)
+		return
+	}
+	for _, target := range targets {
+		s.runOneTeamProbe(ctx, target)
+	}
+}
+
+func (s *ScheduledTestRunnerService) runOneTeamProbe(ctx context.Context, target OpenAITeamProbeTarget) {
+	if s.rateLimitSvc != nil && s.rateLimitSvc.settingService != nil && !s.rateLimitSvc.settingService.IsOpenAITeamLinkedResolverEnabled(ctx) {
+		return
+	}
+	lease, err := s.rateLimitSvc.ClaimOpenAITeamProbe(ctx, target.AccountID, "team-ttl-probe")
+	if err != nil {
+		logger.LegacyPrintf("service.scheduled_test_runner", "[ScheduledTestRunner] team=%s claim failed: %v", target.TeamID, err)
+		return
+	}
+	if lease == nil {
+		return
+	}
+	result, err := s.accountTestSvc.RunTestBackground(ctx, target.AccountID, "")
+	succeeded := err == nil && result != nil && result.Status == "success"
+	if completeErr := s.rateLimitSvc.CompleteOpenAITeamProbe(ctx, lease, succeeded); completeErr != nil {
+		logger.LegacyPrintf("service.scheduled_test_runner", "[ScheduledTestRunner] team=%s completion failed: %v", target.TeamID, completeErr)
+	}
+	if err != nil {
+		logger.LegacyPrintf("service.scheduled_test_runner", "[ScheduledTestRunner] team=%s probe failed: %v", target.TeamID, err)
+	}
+}
+
 func (s *ScheduledTestRunnerService) runOnePlan(ctx context.Context, plan *ScheduledTestPlan) {
+	var teamProbe *OpenAITeamProbeLease
+	if s.rateLimitSvc != nil && (s.rateLimitSvc.settingService == nil || s.rateLimitSvc.settingService.IsOpenAITeamLinkedResolverEnabled(ctx)) {
+		var err error
+		teamProbe, err = s.rateLimitSvc.ClaimOpenAITeamProbe(ctx, plan.AccountID, fmt.Sprintf("scheduled-test-%d", plan.ID))
+		if err != nil {
+			logger.LegacyPrintf("service.scheduled_test_runner", "[ScheduledTestRunner] plan=%d Team probe claim failed: %v", plan.ID, err)
+			return
+		}
+		if teamProbe == nil {
+			active, err := s.rateLimitSvc.HasActiveOpenAITeamBlock(ctx, plan.AccountID)
+			if err != nil {
+				logger.LegacyPrintf("service.scheduled_test_runner", "[ScheduledTestRunner] plan=%d Team state check failed: %v", plan.ID, err)
+				return
+			}
+			if shouldSkipScheduledTeamTest(active, teamProbe) {
+				// A normal scheduled test is not a Team recovery probe. Do not let
+				// an early successful test (especially auto_recover) clear only one
+				// account before the Team TTL and CAS probe have completed.
+				s.advancePlanAfterTeamBlock(ctx, plan)
+				return
+			}
+		}
+	}
 	result, err := s.accountTestSvc.RunTestBackground(ctx, plan.AccountID, plan.ModelID)
 	if err != nil {
+		if teamProbe != nil {
+			_ = s.rateLimitSvc.CompleteOpenAITeamProbe(ctx, teamProbe, false)
+		}
 		logger.LegacyPrintf("service.scheduled_test_runner", "[ScheduledTestRunner] plan=%d RunTestBackground error: %v", plan.ID, err)
 		return
+	}
+	if teamProbe != nil {
+		if err := s.rateLimitSvc.CompleteOpenAITeamProbe(ctx, teamProbe, result.Status == "success"); err != nil {
+			logger.LegacyPrintf("service.scheduled_test_runner", "[ScheduledTestRunner] plan=%d Team probe completion failed: %v", plan.ID, err)
+		}
 	}
 
 	if err := s.scheduledSvc.SaveResult(ctx, plan.ID, plan.MaxResults, result); err != nil {
@@ -131,7 +203,7 @@ func (s *ScheduledTestRunnerService) runOnePlan(ctx context.Context, plan *Sched
 	}
 
 	// Auto-recover account if test succeeded and auto_recover is enabled.
-	if result.Status == "success" && plan.AutoRecover {
+	if teamProbe == nil && result.Status == "success" && plan.AutoRecover {
 		s.tryRecoverAccount(ctx, plan.AccountID, plan.ID)
 	}
 
@@ -143,6 +215,21 @@ func (s *ScheduledTestRunnerService) runOnePlan(ctx context.Context, plan *Sched
 
 	if err := s.planRepo.UpdateAfterRun(ctx, plan.ID, time.Now(), nextRun); err != nil {
 		logger.LegacyPrintf("service.scheduled_test_runner", "[ScheduledTestRunner] plan=%d UpdateAfterRun error: %v", plan.ID, err)
+	}
+}
+
+func shouldSkipScheduledTeamTest(teamBlocked bool, teamProbe *OpenAITeamProbeLease) bool {
+	return teamBlocked && teamProbe == nil
+}
+
+func (s *ScheduledTestRunnerService) advancePlanAfterTeamBlock(ctx context.Context, plan *ScheduledTestPlan) {
+	nextRun, err := computeNextRun(plan.CronExpression, time.Now())
+	if err != nil {
+		logger.LegacyPrintf("service.scheduled_test_runner", "[ScheduledTestRunner] plan=%d computeNextRun after Team block error: %v", plan.ID, err)
+		return
+	}
+	if err := s.planRepo.UpdateAfterRun(ctx, plan.ID, time.Now(), nextRun); err != nil {
+		logger.LegacyPrintf("service.scheduled_test_runner", "[ScheduledTestRunner] plan=%d advance after Team block error: %v", plan.ID, err)
 	}
 }
 

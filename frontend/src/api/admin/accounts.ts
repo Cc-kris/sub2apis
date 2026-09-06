@@ -274,6 +274,20 @@ export async function testAccount(id: number): Promise<{
   return data
 }
 
+export interface TeamWorkspaceBlockStatus {
+  active: boolean
+  team_id?: string
+  state?: 'blocked' | 'probe_due' | 'probing'
+  block_until?: string
+  affected_account_ids?: number[]
+  recovery_action?: string
+}
+
+export async function getTeamWorkspaceBlockStatus(id: number): Promise<TeamWorkspaceBlockStatus> {
+  const { data } = await apiClient.get<TeamWorkspaceBlockStatus>(`/admin/accounts/${id}/team-workspace`)
+  return data
+}
+
 
 export interface BatchAccountTestItem {
   account_id: number
@@ -785,6 +799,7 @@ export const accountsAPI = {
   delete: deleteAccount,
   toggleStatus,
   testAccount,
+  getTeamWorkspaceBlockStatus,
   batchTestActive,
   refreshCredentials,
   getStats,

@@ -1,8 +1,11 @@
 package service
 
 import (
+	"bytes"
 	"compress/gzip"
 	"context"
+	"crypto/sha256"
+	"encoding/hex"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -26,7 +29,8 @@ const (
 	settingKeyBackupSchedule = "backup_schedule"
 	settingKeyBackupRecords  = "backup_records"
 
-	maxBackupRecords = 100
+	maxBackupRecords    = 100
+	BackupPartSizeBytes = 64 << 20
 )
 
 var (
@@ -49,7 +53,14 @@ type DBDumper interface {
 // BackupObjectStore abstracts object storage for backup files
 type BackupObjectStore interface {
 	Upload(ctx context.Context, key string, body io.Reader, contentType string) (sizeBytes int64, err error)
+	// UploadPart streams one backup part to an independent object and returns
+	// the persisted byte count and SHA-256 digest. Implementations must not
+	// buffer the complete part in memory.
+	UploadPart(ctx context.Context, key string, partNo int, body io.Reader, contentType string) (sizeBytes int64, sha256 string, err error)
 	Download(ctx context.Context, key string) (io.ReadCloser, error)
+	// DownloadPart opens one previously uploaded backup part. Missing parts
+	// are reported using the underlying object-store not-found error.
+	DownloadPart(ctx context.Context, key string, partNo int) (io.ReadCloser, error)
 	Delete(ctx context.Context, key string) error
 	PresignURL(ctx context.Context, key string, expiry time.Duration) (string, error)
 	HeadBucket(ctx context.Context) error
@@ -110,6 +121,8 @@ type BackupService struct {
 	encryptor    SecretEncryptor
 	storeFactory BackupObjectStoreFactory
 	dumper       DBDumper
+	backupRepo   BackupRepository
+	ownerID      string
 
 	opMu      sync.Mutex // 保护 backingUp/restoring 标志
 	backingUp bool
@@ -136,15 +149,21 @@ func NewBackupService(
 	cfg *config.Config,
 	encryptor SecretEncryptor,
 	storeFactory BackupObjectStoreFactory,
-	dumper DBDumper,
+	dumper DBDumper, repos ...BackupRepository,
 ) *BackupService {
 	bgCtx, bgCancel := context.WithCancel(context.Background())
+	var backupRepo BackupRepository
+	if len(repos) > 0 {
+		backupRepo = repos[0]
+	}
 	return &BackupService{
 		settingRepo:  settingRepo,
 		dbCfg:        &cfg.Database,
 		encryptor:    encryptor,
 		storeFactory: storeFactory,
 		dumper:       dumper,
+		backupRepo:   backupRepo,
+		ownerID:      uuid.NewString(),
 		bgCtx:        bgCtx,
 		bgCancel:     bgCancel,
 	}
@@ -390,6 +409,16 @@ func (s *BackupService) runScheduledBackup() {
 
 	ctx, cancel := context.WithTimeout(s.bgCtx, 30*time.Minute)
 	defer cancel()
+	if s.backupRepo != nil {
+		ok, err := s.backupRepo.AcquireBackupLease(ctx, "scheduled-backup", s.ownerID, time.Now().Add(35*time.Minute))
+		if err != nil || !ok {
+			if err != nil {
+				logger.LegacyPrintf("service.backup", "[Backup] lease acquire failed: %v", err)
+			}
+			return
+		}
+		defer func() { _ = s.backupRepo.ReleaseBackupLease(context.Background(), "scheduled-backup", s.ownerID) }()
+	}
 
 	// 读取定时备份配置中的过期天数
 	schedule, _ := s.GetSchedule(ctx)
@@ -419,6 +448,123 @@ func (s *BackupService) runScheduledBackup() {
 	}
 }
 
+// uploadManifested streams a gzip stream into independently persisted parts.
+// Existing single-object uploads remain readable through Download fallback.
+func (s *BackupService) uploadManifested(ctx context.Context, store BackupObjectStore, backupID, key string, body io.Reader) (int64, string, error) {
+	if s.backupRepo == nil {
+		sz, err := store.Upload(ctx, key, body, "application/gzip")
+		return sz, "", err
+	}
+	if err := s.backupRepo.CreateBackupManifest(ctx, BackupManifest{BackupID: backupID, Status: "uploading", ObjectKey: key, CreatedAt: time.Now(), UpdatedAt: time.Now()}); err != nil {
+		manifest, getErr := s.backupRepo.GetBackupManifest(ctx, backupID)
+		if getErr != nil || manifest == nil || manifest.ObjectKey != key || manifest.Status == "complete" {
+			return 0, "", err
+		}
+	}
+	existing, err := s.backupRepo.ListBackupManifestParts(ctx, backupID)
+	if err != nil {
+		return 0, "", err
+	}
+	completed := make(map[int]BackupManifestPart, len(existing))
+	for _, p := range existing {
+		if p.Status == "complete" {
+			completed[p.PartNo] = p
+		}
+	}
+	buf := make([]byte, BackupPartSizeBytes)
+	partNo := 1
+	var total int64
+	hash := sha256.New()
+	for {
+		n, readErr := io.ReadFull(body, buf)
+		if readErr != nil && readErr != io.EOF && readErr != io.ErrUnexpectedEOF {
+			return total, "", readErr
+		}
+		if n > 0 {
+			part := buf[:n]
+			if previous, ok := completed[partNo]; ok {
+				sum := sha256.Sum256(part)
+				if previous.SizeBytes == int64(n) && (previous.SHA256 == "" || previous.SHA256 == hex.EncodeToString(sum[:])) {
+					_, _ = hash.Write(part)
+					total += int64(n)
+					partNo++
+					if readErr == io.EOF || readErr == io.ErrUnexpectedEOF {
+						break
+					}
+					continue
+				}
+			}
+			sz, digest, err := store.UploadPart(ctx, key, partNo, bytes.NewReader(part), "application/gzip")
+			if err != nil {
+				msg := err.Error()
+				partErr := s.backupRepo.UpsertBackupManifestPart(ctx, BackupManifestPart{BackupID: backupID, PartNo: partNo, ObjectKey: key, Status: "failed", ErrorMessage: &msg})
+				manifestErr := s.backupRepo.UpdateBackupManifest(ctx, backupID, "failed", total, "", &msg, nil)
+				if partErr != nil {
+					return total, "", fmt.Errorf("upload part: %w; persist failed part: %v", err, partErr)
+				}
+				if manifestErr != nil {
+					return total, "", fmt.Errorf("upload part: %w; persist failed manifest: %v", err, manifestErr)
+				}
+				return total, "", err
+			}
+			_, _ = hash.Write(part)
+			total += sz
+			if err := s.backupRepo.UpsertBackupManifestPart(ctx, BackupManifestPart{BackupID: backupID, PartNo: partNo, ObjectKey: key, SizeBytes: sz, SHA256: digest, Status: "complete"}); err != nil {
+				return total, digest, err
+			}
+			partNo++
+		}
+		if readErr == io.EOF || readErr == io.ErrUnexpectedEOF {
+			break
+		}
+	}
+	digest := hex.EncodeToString(hash.Sum(nil))
+	// Materialize a compatible aggregate object for existing presigned-download
+	// clients. Restore still uses the manifest parts and verifies every digest.
+	parts, err := s.backupRepo.ListBackupManifestParts(ctx, backupID)
+	if err != nil {
+		return total, digest, err
+	}
+	readers := make([]io.Reader, 0, len(parts))
+	closers := make([]io.Closer, 0, len(parts))
+	for _, p := range parts {
+		partBody, openErr := store.DownloadPart(ctx, key, p.PartNo)
+		if openErr != nil {
+			return total, digest, openErr
+		}
+		readers = append(readers, partBody)
+		closers = append(closers, partBody)
+	}
+	_, uploadErr := store.Upload(ctx, key, io.MultiReader(readers...), "application/gzip")
+	for _, closer := range closers {
+		_ = closer.Close()
+	}
+	if uploadErr != nil {
+		msg := uploadErr.Error()
+		_ = s.backupRepo.UpdateBackupManifest(ctx, backupID, "failed", total, digest, &msg, nil)
+		return total, digest, uploadErr
+	}
+	now := time.Now()
+	if err := s.backupRepo.UpdateBackupManifest(ctx, backupID, "complete", total, digest, nil, &now); err != nil {
+		return total, digest, err
+	}
+	return total, digest, nil
+}
+
+func (s *BackupService) acquireBackupExecutionLease(ctx context.Context) (func(), error) {
+	if s.backupRepo == nil {
+		return func() {}, nil
+	}
+	ok, err := s.backupRepo.AcquireBackupLease(ctx, "backup-execution", s.ownerID, time.Now().Add(35*time.Minute))
+	if err != nil {
+		return nil, err
+	}
+	if !ok {
+		return nil, ErrBackupInProgress
+	}
+	return func() { _ = s.backupRepo.ReleaseBackupLease(context.Background(), "backup-execution", s.ownerID) }, nil
+}
+
 // ─── 备份/恢复核心 ───
 
 // CreateBackup 创建全量数据库备份并上传到 S3（流式处理）
@@ -435,6 +581,14 @@ func (s *BackupService) CreateBackup(ctx context.Context, triggeredBy string, ex
 	}
 	s.backingUp = true
 	s.opMu.Unlock()
+	releaseLease, err := s.acquireBackupExecutionLease(ctx)
+	if err != nil {
+		s.opMu.Lock()
+		s.backingUp = false
+		s.opMu.Unlock()
+		return nil, err
+	}
+	defer releaseLease()
 	defer func() {
 		s.opMu.Lock()
 		s.backingUp = false
@@ -512,8 +666,7 @@ func (s *BackupService) CreateBackup(ctx context.Context, triggeredBy string, ex
 		gzipDone <- gzErr
 	}()
 
-	contentType := "application/gzip"
-	sizeBytes, err := objectStore.Upload(ctx, s3Key, pr, contentType)
+	sizeBytes, _, err := s.uploadManifested(ctx, objectStore, backupID, s3Key, pr)
 	if err != nil {
 		_ = pr.CloseWithError(err) // 确保 gzip goroutine 不会悬挂
 		gzErr := <-gzipDone        // 安全等待 gzip goroutine 完成
@@ -552,11 +705,19 @@ func (s *BackupService) StartBackup(ctx context.Context, triggeredBy string, exp
 	}
 	s.backingUp = true
 	s.opMu.Unlock()
+	releaseLease, err := s.acquireBackupExecutionLease(ctx)
+	if err != nil {
+		s.opMu.Lock()
+		s.backingUp = false
+		s.opMu.Unlock()
+		return nil, err
+	}
 
 	// 初始化阶段出错时自动重置标志
 	launched := false
 	defer func() {
 		if !launched {
+			releaseLease()
 			s.opMu.Lock()
 			s.backingUp = false
 			s.opMu.Unlock()
@@ -610,6 +771,7 @@ func (s *BackupService) StartBackup(ctx context.Context, triggeredBy string, exp
 	s.wg.Add(1)
 	go func() {
 		defer s.wg.Done()
+		defer releaseLease()
 		defer func() {
 			s.opMu.Lock()
 			s.backingUp = false
@@ -680,8 +842,7 @@ func (s *BackupService) executeBackup(record *BackupRecord, objectStore BackupOb
 		gzipDone <- gzErr
 	}()
 
-	contentType := "application/gzip"
-	sizeBytes, err := objectStore.Upload(ctx, record.S3Key, pr, contentType)
+	sizeBytes, _, err := s.uploadManifested(ctx, objectStore, record.ID, record.S3Key, pr)
 	if err != nil {
 		_ = pr.CloseWithError(err) // 确保 gzip goroutine 不会悬挂
 		gzErr := <-gzipDone        // 安全等待 gzip goroutine 完成
@@ -739,8 +900,7 @@ func (s *BackupService) RestoreBackup(ctx context.Context, backupID string) erro
 		return fmt.Errorf("init object store: %w", err)
 	}
 
-	// 从 S3 流式下载
-	body, err := objectStore.Download(ctx, record.S3Key)
+	body, err := s.openBackupBody(ctx, objectStore, backupID, record.S3Key)
 	if err != nil {
 		return fmt.Errorf("S3 download failed: %w", err)
 	}
@@ -759,6 +919,94 @@ func (s *BackupService) RestoreBackup(ctx context.Context, backupID string) erro
 	}
 
 	return nil
+}
+
+type backupPartReadCloser struct {
+	*io.PipeReader
+	cancel context.CancelFunc
+}
+
+func (r *backupPartReadCloser) Close() error {
+	r.cancel()
+	return r.PipeReader.Close()
+}
+
+type countingWriter struct {
+	w io.Writer
+	n int64
+}
+
+func (w *countingWriter) Write(p []byte) (int, error) {
+	n, err := w.w.Write(p)
+	w.n += int64(n)
+	return n, err
+}
+
+func (s *BackupService) openBackupBody(ctx context.Context, store BackupObjectStore, backupID, key string) (io.ReadCloser, error) {
+	if s.backupRepo == nil {
+		return store.Download(ctx, key)
+	}
+	m, err := s.backupRepo.GetBackupManifest(ctx, backupID)
+	if err != nil {
+		return nil, fmt.Errorf("load backup manifest: %w", err)
+	}
+	if m == nil {
+		return store.Download(ctx, key)
+	}
+	if m.Status != "complete" {
+		return nil, fmt.Errorf("backup manifest is %s", m.Status)
+	}
+	parts, err := s.backupRepo.ListBackupManifestParts(ctx, backupID)
+	if err != nil {
+		return nil, fmt.Errorf("load backup manifest parts: %w", err)
+	}
+	if len(parts) == 0 {
+		return nil, fmt.Errorf("backup manifest has no parts")
+	}
+	streamCtx, cancel := context.WithCancel(ctx)
+	pr, pw := io.Pipe()
+	go func() {
+		defer cancel()
+		wholeHash := sha256.New()
+		var total int64
+		for _, p := range parts {
+			if p.Status != "complete" {
+				_ = pw.CloseWithError(fmt.Errorf("backup part %d is not complete", p.PartNo))
+				return
+			}
+			body, downloadErr := store.DownloadPart(streamCtx, key, p.PartNo)
+			if downloadErr != nil {
+				_ = pw.CloseWithError(downloadErr)
+				return
+			}
+			partHash := sha256.New()
+			partWriter := &countingWriter{w: io.MultiWriter(pw, partHash, wholeHash)}
+			_, copyErr := io.Copy(partWriter, body)
+			closeErr := body.Close()
+			if copyErr != nil {
+				_ = pw.CloseWithError(copyErr)
+				return
+			}
+			if closeErr != nil {
+				_ = pw.CloseWithError(closeErr)
+				return
+			}
+			partDigest := hex.EncodeToString(partHash.Sum(nil))
+			if partWriter.n != p.SizeBytes || (p.SHA256 != "" && partDigest != p.SHA256) {
+				_ = pw.CloseWithError(fmt.Errorf("backup part %d checksum or size mismatch", p.PartNo))
+				return
+			}
+			total += partWriter.n
+		}
+		wholeDigest := hex.EncodeToString(wholeHash.Sum(nil))
+		if total != m.TotalSizeBytes || (m.SHA256 != "" && wholeDigest != m.SHA256) {
+			_ = pw.CloseWithError(fmt.Errorf("backup manifest checksum or size mismatch"))
+			return
+		}
+		_ = pw.Close()
+	}()
+	_ = streamCtx
+	return &backupPartReadCloser{PipeReader: pr, cancel: cancel}, nil
 }
 
 // StartRestore 异步恢复备份，立即返回
@@ -835,7 +1083,7 @@ func (s *BackupService) executeRestore(record *BackupRecord, objectStore BackupO
 	ctx, cancel := context.WithTimeout(s.bgCtx, 30*time.Minute)
 	defer cancel()
 
-	body, err := objectStore.Download(ctx, record.S3Key)
+	body, err := s.openBackupBody(ctx, objectStore, record.ID, record.S3Key)
 	if err != nil {
 		record.RestoreStatus = "failed"
 		record.RestoreError = fmt.Sprintf("S3 download failed: %v", err)
@@ -919,10 +1167,41 @@ func (s *BackupService) DeleteBackup(ctx context.Context, backupID string) error
 	// 从 S3 删除
 	if found.S3Key != "" && found.Status == "completed" {
 		s3Cfg, err := s.loadS3Config(ctx)
-		if err == nil && s3Cfg != nil && s3Cfg.IsConfigured() {
+		if err != nil {
+			return err
+		}
+		if s3Cfg != nil && s3Cfg.IsConfigured() {
 			objectStore, err := s.getOrCreateStore(ctx, s3Cfg)
-			if err == nil {
-				_ = objectStore.Delete(ctx, found.S3Key)
+			if err != nil {
+				return err
+			}
+			var deleteErr error
+			if s.backupRepo != nil {
+				manifest, manifestErr := s.backupRepo.GetBackupManifest(ctx, found.ID)
+				if manifestErr != nil {
+					return manifestErr
+				}
+				if manifest != nil {
+					parts, partsErr := s.backupRepo.ListBackupManifestParts(ctx, found.ID)
+					if partsErr != nil {
+						return partsErr
+					}
+					for _, part := range parts {
+						partKey := part.ObjectKey
+						if partKey == "" {
+							partKey = fmt.Sprintf("%s.part-%05d", found.S3Key, part.PartNo)
+						}
+						if err := objectStore.Delete(ctx, partKey); err != nil {
+							deleteErr = errors.Join(deleteErr, err)
+						}
+					}
+				}
+			}
+			if err := objectStore.Delete(ctx, found.S3Key); err != nil {
+				deleteErr = errors.Join(deleteErr, err)
+			}
+			if deleteErr != nil {
+				return fmt.Errorf("delete backup objects: %w", deleteErr)
 			}
 		}
 	}
@@ -1111,27 +1390,63 @@ func (s *BackupService) cleanupOldBackups(ctx context.Context, schedule *BackupS
 	}
 
 	// 删除 S3 上的文件
+	var cleanupErr error
+	deletedCount := 0
 	for _, r := range toDelete {
 		if r.S3Key != "" {
-			_ = s.deleteS3Object(ctx, r.S3Key)
+			if err := s.deleteS3Object(ctx, r.ID, r.S3Key); err != nil {
+				cleanupErr = errors.Join(cleanupErr, fmt.Errorf("backup %s: %w", r.ID, err))
+				toKeep = append(toKeep, r)
+				continue
+			}
 		}
+		deletedCount++
 	}
 
 	if len(toDelete) > 0 {
-		logger.LegacyPrintf("service.backup", "[Backup] 自动清理了 %d 个过期备份", len(toDelete))
-		return s.saveRecordsLocked(ctx, toKeep)
+		if err := s.saveRecordsLocked(ctx, toKeep); err != nil {
+			return err
+		}
+		if cleanupErr != nil {
+			return fmt.Errorf("cleanup backup objects: %w", cleanupErr)
+		}
+		logger.LegacyPrintf("service.backup", "[Backup] 自动清理了 %d 个过期备份", deletedCount)
 	}
 	return nil
 }
 
-func (s *BackupService) deleteS3Object(ctx context.Context, key string) error {
+func (s *BackupService) deleteS3Object(ctx context.Context, backupID, key string) error {
 	s3Cfg, err := s.loadS3Config(ctx)
-	if err != nil || s3Cfg == nil {
+	if err != nil {
+		return err
+	}
+	if s3Cfg == nil {
 		return nil
 	}
 	objectStore, err := s.getOrCreateStore(ctx, s3Cfg)
 	if err != nil {
 		return err
+	}
+	if s.backupRepo != nil {
+		manifest, manifestErr := s.backupRepo.GetBackupManifest(ctx, backupID)
+		if manifestErr != nil {
+			return manifestErr
+		}
+		if manifest != nil {
+			parts, partsErr := s.backupRepo.ListBackupManifestParts(ctx, backupID)
+			if partsErr != nil {
+				return partsErr
+			}
+			for _, part := range parts {
+				partKey := part.ObjectKey
+				if partKey == "" {
+					partKey = fmt.Sprintf("%s.part-%05d", key, part.PartNo)
+				}
+				if err := objectStore.Delete(ctx, partKey); err != nil {
+					return err
+				}
+			}
+		}
 	}
 	return objectStore.Delete(ctx, key)
 }

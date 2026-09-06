@@ -18,7 +18,7 @@ func TestBuildFinalUsageUpstreamAttemptCopiesImmutableBillingFacts(t *testing.T)
 	changeID, profileID := int64(41), int64(51)
 	log := &UsageLog{
 		AccountID: 9, RequestID: "req-attempt", Model: "gpt-5.5", UpstreamModel: &upstreamModel,
-		ServiceTier: &serviceTier, InputTokens: 10, OutputTokens: 20, CacheReadTokens: 3,
+		ServiceTier: &serviceTier, InputTokens: 10, OutputTokens: 20, CacheReadTokens: 3, CacheCreationTokens: 6,
 		CacheCreation5mTokens: 4, CacheCreation1hTokens: 5,
 		UpstreamCostMultiplier: &multiplier, CreatedAt: createdAt,
 		UpstreamMultiplierChangeID: &changeID, UpstreamMultiplierSource: "account_config",
@@ -30,6 +30,7 @@ func TestBuildFinalUsageUpstreamAttemptCopiesImmutableBillingFacts(t *testing.T)
 	require.True(t, attempt.Billable)
 	require.Equal(t, "gpt-5.5-2026-07-01", attempt.UpstreamModel)
 	require.Equal(t, int64(3), attempt.CacheReadTokens)
+	require.Equal(t, int64(6), attempt.CacheCreationTokens)
 	require.Equal(t, "1.2500", attempt.UpstreamCostMultiplier.StringFixed(4))
 	require.Equal(t, int64(41), *attempt.UpstreamMultiplierChangeID)
 	require.Equal(t, "account_config", attempt.UpstreamMultiplierSource)

@@ -89,3 +89,33 @@ func TestAccountFromServiceShallow_DropsDeprecatedUpstreamWarningExtra(t *testin
 	require.Contains(t, src.Extra, "upstream_warning_amount")
 	require.Contains(t, src.Extra, "upstream_notify_enabled")
 }
+
+func TestAccountFromServiceShallow_RedactsSensitiveExtra(t *testing.T) {
+	src := &service.Account{
+		ID:       44,
+		Name:     "extra-secret",
+		Platform: "openai",
+		Type:     "apikey",
+		Extra: map[string]any{
+			"private_token":         "sentinel-private-token",
+			"client_secret":         "sentinel-client-secret",
+			"session_token_present": true,
+			"access_token_sha256":   "fingerprint",
+			"quota_daily_reset_at":  "2026-08-31T00:00:00Z",
+		},
+	}
+
+	got := AccountFromServiceShallow(src)
+	require.NotNil(t, got)
+	require.NotContains(t, got.Extra, "private_token")
+	require.NotContains(t, got.Extra, "client_secret")
+	require.Equal(t, true, got.Extra["session_token_present"])
+	require.Equal(t, "fingerprint", got.Extra["access_token_sha256"])
+	require.Equal(t, "2026-08-31T00:00:00Z", got.Extra["quota_daily_reset_at"])
+
+	raw, err := json.Marshal(got)
+	require.NoError(t, err)
+	require.NotContains(t, string(raw), "sentinel-private-token")
+	require.NotContains(t, string(raw), "sentinel-client-secret")
+	require.Contains(t, string(raw), "session_token_present")
+}

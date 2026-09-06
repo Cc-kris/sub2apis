@@ -148,6 +148,12 @@ func (s *OpenAIGatewayService) selectCompatiblePlatformAccount(
 		if s.isOpenAIAccountRuntimeBlocked(account) || !isOpenAICompatibleAccountEligibleForRequest(ctx, account, platform, requestedModel, false, requiredCapability) {
 			continue
 		}
+		if isDomesticOpenAICompatiblePlatform(platform) && s.cnQuotaService != nil {
+			snapshot, snapshotErr := s.cnQuotaService.GetSnapshot(ctx, account, false)
+			if snapshotErr == nil && cnProviderSnapshotBlocksScheduling(snapshot, time.Now()) {
+				continue
+			}
+		}
 		candidates = append(candidates, account)
 	}
 	decision.CandidateCount = len(candidates)
@@ -184,4 +190,28 @@ func (s *OpenAIGatewayService) selectCompatiblePlatformAccount(
 		return selection, decision, nil
 	}
 	return nil, decision, ErrNoAvailableAccounts
+}
+
+func cnProviderSnapshotBlocksScheduling(snapshot *CNProviderQuotaSnapshot, now time.Time) bool {
+	if snapshot == nil || snapshot.State != "fresh" {
+		return false
+	}
+	if snapshot.ExpiresAt != nil && !now.Before(*snapshot.ExpiresAt) {
+		return false
+	}
+	if snapshot.Remaining != nil && *snapshot.Remaining <= 0 {
+		if snapshot.ResetAt == nil || now.Before(*snapshot.ResetAt) {
+			return true
+		}
+	}
+	for _, name := range []string{"requests", "tokens"} {
+		window, ok := snapshot.RateLimits[name]
+		if !ok || window.Remaining == nil || *window.Remaining > 0 {
+			continue
+		}
+		if window.ResetAt == nil || now.Before(*window.ResetAt) {
+			return true
+		}
+	}
+	return false
 }

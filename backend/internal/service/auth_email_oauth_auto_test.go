@@ -86,3 +86,12 @@ func TestEmailOAuthAuto_SnapshotsPlatformQuotaDefaults(t *testing.T) {
 	require.NotNil(t, geminiRecord.MonthlyLimitUSD)
 	require.InDelta(t, 100.0, *geminiRecord.MonthlyLimitUSD, 0.0001)
 }
+
+func TestEmailOAuthAutoPreservesDomainLimit429(t *testing.T) {
+	userRepo := &userRepoStub{domainCreateErr: ErrRegistrationDomainLimit}
+	svc := newEmailOAuthAutoAuthService(userRepo, map[string]string{
+		SettingKeyRegistrationEnabled: "true", SettingKeyRegistrationDomainLimitEnabled: "true", SettingKeyRegistrationDomainLimitPerDomain: "1",
+	}, nil)
+	_, err := svc.createEmailOAuthUser(context.Background(), "newoauth@example.com", "newoauth", "github", "", "")
+	require.ErrorIs(t, err, ErrRegistrationDomainLimit)
+}

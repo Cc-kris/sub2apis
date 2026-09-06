@@ -736,6 +736,9 @@ func newEmailBindUserRepoStub(user *service.User) *emailBindUserRepoStub {
 }
 
 func (s *emailBindUserRepoStub) Create(context.Context, *service.User) error { return nil }
+func (s *emailBindUserRepoStub) CountByEmailDomain(context.Context, string) (int, error) {
+	return 0, nil
+}
 
 func (s *emailBindUserRepoStub) GetByID(_ context.Context, id int64) (*service.User, error) {
 	s.mu.Lock()

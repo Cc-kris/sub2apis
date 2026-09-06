@@ -809,7 +809,26 @@ func (s *defaultOpenAIAccountScheduler) tryAcquireOpenAISelectionOrder(
 		}
 		if result != nil && result.Acquired {
 			if req.SessionHash != "" {
-				_ = s.service.BindStickySession(ctx, req.GroupID, req.SessionHash, fresh.ID)
+				boundAccountID, claimed, claimErr := s.service.claimStickySessionAccountID(ctx, req.GroupID, req.SessionHash, fresh.ID, s.service.openAIWSSessionStickyTTL())
+				if claimErr != nil {
+					if result.ReleaseFunc != nil {
+						result.ReleaseFunc()
+					}
+					return nil, compactBlocked, claimErr
+				}
+				if !claimed && boundAccountID > 0 && boundAccountID != fresh.ID {
+					if result.ReleaseFunc != nil {
+						result.ReleaseFunc()
+					}
+					boundSelection, selectErr := s.selectBySessionHash(ctx, req)
+					if selectErr != nil {
+						return nil, compactBlocked, selectErr
+					}
+					if boundSelection != nil && boundSelection.Account != nil {
+						return boundSelection, compactBlocked, nil
+					}
+					continue
+				}
 			}
 			return &AccountSelectionResult{
 				Account:     fresh,

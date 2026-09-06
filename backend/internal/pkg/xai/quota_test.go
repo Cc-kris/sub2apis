@@ -5,6 +5,7 @@ package xai
 import (
 	"net/http"
 	"testing"
+	"time"
 
 	"github.com/stretchr/testify/require"
 )
@@ -68,4 +69,25 @@ func TestIsGrokFreeRolling24hTokenLimit(t *testing.T) {
 	require.True(t, IsGrokFreeRolling24hTokenLimit(GrokFreeRolling24hTokenLimit))
 	require.True(t, IsGrokFreeRolling24hTokenLimit(2_000_000), "legacy snapshots remain classifiable")
 	require.False(t, IsGrokFreeRolling24hTokenLimit(3_000_000))
+}
+
+func TestParseQuotaHeadersSupportsAlternateNamesAndRelativeReset(t *testing.T) {
+	t.Parallel()
+
+	headers := http.Header{}
+	headers.Set("x-rate-limit-limit-requests", "10")
+	headers.Set("x-rate-limit-remaining-requests", "4")
+	headers.Set("x-rate-limit-reset-requests", "60")
+	headers.Set("x-xai-user-tier", "SuperGrok")
+	headers.Set("x-user-entitlement-status", "active")
+
+	before := time.Now().Unix()
+	snapshot := ParseQuotaHeaders(headers, http.StatusOK)
+	require.NotNil(t, snapshot)
+	require.Equal(t, int64(10), *snapshot.Requests.Limit)
+	require.Equal(t, int64(4), *snapshot.Requests.Remaining)
+	require.GreaterOrEqual(t, *snapshot.Requests.ResetUnix, before+59)
+	require.LessOrEqual(t, *snapshot.Requests.ResetUnix, time.Now().Unix()+61)
+	require.Equal(t, "SuperGrok", snapshot.SubscriptionTier)
+	require.Equal(t, "active", snapshot.EntitlementStatus)
 }

@@ -129,6 +129,34 @@
             </div>
           </div>
 
+          <div class="mt-3 rounded border border-gray-200 p-2 dark:border-dark-600">
+            <div class="text-xs font-medium text-gray-500 dark:text-gray-400">{{ t('admin.channels.form.timePricing', '分时与服务档位倍率') }}</div>
+            <div class="mt-2 grid grid-cols-1 gap-2 sm:grid-cols-3">
+              <div>
+                <label class="text-xs text-gray-400">{{ t('admin.channels.form.timezone', '时区') }}</label>
+                <input :value="entry.time_pricing?.timezone || ''" @input="updateTimezone(($event.target as HTMLInputElement).value)" class="input mt-0.5 text-sm" placeholder="Asia/Shanghai" />
+              </div>
+              <div>
+                <label class="text-xs text-gray-400">{{ t('admin.channels.form.fastMultiplier', 'Fast 倍率') }}</label>
+                <input :value="entry.fast_multiplier" @input="emitField('fast_multiplier', ($event.target as HTMLInputElement).value)" type="number" min="0.0000001" step="any" class="input mt-0.5 text-sm" placeholder="1" />
+              </div>
+              <div>
+                <label class="text-xs text-gray-400">{{ t('admin.channels.form.flexMultiplier', 'Flex 倍率') }}</label>
+                <input :value="entry.flex_multiplier" @input="emitField('flex_multiplier', ($event.target as HTMLInputElement).value)" type="number" min="0.0000001" step="any" class="input mt-0.5 text-sm" placeholder="1" />
+              </div>
+            </div>
+            <p class="mt-1 text-xs text-gray-400">{{ t('admin.channels.form.timePricingHint', '时段按左闭右开计算；未命中时倍率为 1。') }}</p>
+            <div v-if="entry.time_pricing" class="mt-2 space-y-1.5">
+              <div v-for="(period, idx) in entry.time_pricing.periods" :key="idx" class="grid grid-cols-[1fr_1fr_1fr_auto] items-end gap-2">
+                <label class="text-xs text-gray-400">开始分钟<input :value="period.start_minute" type="number" min="0" max="1439" class="input mt-0.5 text-sm" @input="updatePeriod(idx, 'start_minute', ($event.target as HTMLInputElement).value)" /></label>
+                <label class="text-xs text-gray-400">结束分钟<input :value="period.end_minute" type="number" min="1" max="1440" class="input mt-0.5 text-sm" @input="updatePeriod(idx, 'end_minute', ($event.target as HTMLInputElement).value)" /></label>
+                <label class="text-xs text-gray-400">时段倍率<input :value="period.multiplier" type="number" min="0.0000001" step="any" class="input mt-0.5 text-sm" @input="updatePeriod(idx, 'multiplier', ($event.target as HTMLInputElement).value)" /></label>
+                <button type="button" class="mb-1 rounded p-1 text-gray-400 hover:text-red-500" @click="removePeriod(idx)"><Icon name="trash" size="sm" /></button>
+              </div>
+              <button type="button" class="text-xs text-primary-600 hover:text-primary-700" @click="addPeriod">+ 添加时段</button>
+            </div>
+          </div>
+
           <!-- Token intervals -->
           <div class="mt-3">
             <div class="flex items-center justify-between">
@@ -269,6 +297,33 @@ const billingModeLabel = computed(() => {
 
 function emitField(field: keyof PricingFormEntry, value: string) {
   emit('update', { ...props.entry, [field]: value === '' ? null : value })
+}
+
+function updateTimezone(timezone: string) {
+  const current = props.entry.time_pricing
+  emit('update', {
+    ...props.entry,
+    time_pricing: timezone.trim() === '' ? null : {
+      timezone,
+      periods: current?.periods || [{ start_minute: 0, end_minute: 1440, multiplier: 1 }]
+    }
+  })
+}
+
+function updatePeriod(idx: number, field: 'start_minute' | 'end_minute' | 'multiplier', value: string) {
+  if (!props.entry.time_pricing) return
+  const periods = props.entry.time_pricing.periods.map((period, i) => i === idx ? { ...period, [field]: Number(value) } : period)
+  emit('update', { ...props.entry, time_pricing: { ...props.entry.time_pricing, periods } })
+}
+
+function addPeriod() {
+  if (!props.entry.time_pricing) return
+  emit('update', { ...props.entry, time_pricing: { ...props.entry.time_pricing, periods: [...props.entry.time_pricing.periods, { start_minute: 0, end_minute: 1440, multiplier: 1 }] } })
+}
+
+function removePeriod(idx: number) {
+  if (!props.entry.time_pricing) return
+  emit('update', { ...props.entry, time_pricing: { ...props.entry.time_pricing, periods: props.entry.time_pricing.periods.filter((_, i) => i !== idx) } })
 }
 
 function addInterval() {

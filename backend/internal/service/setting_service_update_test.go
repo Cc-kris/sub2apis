@@ -13,45 +13,6 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
-type settingUpdateRepoStub struct {
-	updates map[string]string
-	values  map[string]string
-}
-
-func (s *settingUpdateRepoStub) Get(ctx context.Context, key string) (*Setting, error) {
-	panic("unexpected Get call")
-}
-
-func (s *settingUpdateRepoStub) GetValue(ctx context.Context, key string) (string, error) {
-	if value, ok := s.values[key]; ok {
-		return value, nil
-	}
-	if key == SettingKeySalesPricingVersion {
-		return string(SalesPricingVersionLegacy), nil
-	}
-	return "", ErrSettingNotFound
-}
-
-func (s *settingUpdateRepoStub) Set(ctx context.Context, key, value string) error {
-	panic("unexpected Set call")
-}
-
-func (s *settingUpdateRepoStub) GetMultiple(ctx context.Context, keys []string) (map[string]string, error) {
-	panic("unexpected GetMultiple call")
-}
-
-func (s *settingUpdateRepoStub) SetMultiple(ctx context.Context, settings map[string]string) error {
-	s.updates = make(map[string]string, len(settings))
-	for k, v := range settings {
-		s.updates[k] = v
-		if s.values == nil {
-			s.values = make(map[string]string)
-		}
-		s.values[k] = v
-	}
-	return nil
-}
-
 func TestSettingServiceSalesPricingVersion_DefaultAndTransitions(t *testing.T) {
 	repo := &settingUpdateRepoStub{}
 	svc := NewSettingService(repo, &config.Config{})
@@ -93,12 +54,92 @@ func TestSettingServiceSalesPricingVersion_RejectsSkipAndMissingReason(t *testin
 	require.Equal(t, "INVALID_SALES_PRICING_CHANGE_REASON", infraerrors.Reason(err))
 }
 
-func (s *settingUpdateRepoStub) GetAll(ctx context.Context) (map[string]string, error) {
-	panic("unexpected GetAll call")
+func TestSettingServiceOpenAIRemoteCompactionV2Enabled_DefaultsOnAndReadsSwitch(t *testing.T) {
+	repo := &settingUpdateRepoStub{values: map[string]string{}}
+	svc := NewSettingService(repo, &config.Config{})
+	require.True(t, svc.IsOpenAIRemoteCompactionV2Enabled(context.Background()))
+
+	repo.values[SettingKeyOpenAIRemoteCompactionV2Enabled] = "false"
+	require.False(t, svc.IsOpenAIRemoteCompactionV2Enabled(context.Background()))
+	repo.values[SettingKeyOpenAIRemoteCompactionV2Enabled] = "true"
+	require.True(t, svc.IsOpenAIRemoteCompactionV2Enabled(context.Background()))
 }
 
-func (s *settingUpdateRepoStub) Delete(ctx context.Context, key string) error {
-	panic("unexpected Delete call")
+func TestSettingServiceOpenAIRemoteCompactionV2EnabledPersists(t *testing.T) {
+	repo := &settingUpdateRepoStub{values: map[string]string{}}
+	svc := NewSettingService(repo, &config.Config{})
+	require.NoError(t, svc.UpdateSettings(context.Background(), &SystemSettings{
+		OpenAIRemoteCompactionV2Enabled: false,
+	}))
+	require.Equal(t, "false", repo.updates[SettingKeyOpenAIRemoteCompactionV2Enabled])
+}
+
+func TestSettingServiceSalesPricingResolverEnabledDefaultsOnAndPersists(t *testing.T) {
+	repo := &settingUpdateRepoStub{values: map[string]string{}}
+	svc := NewSettingService(repo, &config.Config{})
+	require.True(t, svc.IsSalesPricingResolverEnabled(context.Background()))
+
+	repo.values[SettingKeySalesPricingResolverEnabled] = "false"
+	require.False(t, svc.IsSalesPricingResolverEnabled(context.Background()))
+
+	repo.getErr = context.DeadlineExceeded
+	require.False(t, svc.IsSalesPricingResolverEnabled(context.Background()))
+	repo.getErr = nil
+
+	require.NoError(t, svc.UpdateSettings(context.Background(), &SystemSettings{
+		SalesPricingResolverEnabled: false,
+	}))
+	require.Equal(t, "false", repo.updates[SettingKeySalesPricingResolverEnabled])
+}
+
+func TestSettingServiceSalesPricingResolverChangeRequiresReason(t *testing.T) {
+	repo := &settingUpdateRepoStub{values: map[string]string{SettingKeySalesPricingResolverEnabled: "true"}}
+	svc := NewSettingService(repo, &config.Config{})
+	current := true
+	err := svc.UpdateSettings(context.Background(), &SystemSettings{SalesPricingResolverEnabled: false, CurrentSalesPricingResolverEnabled: &current})
+	require.Equal(t, "INVALID_SALES_PRICING_CHANGE_REASON", infraerrors.Reason(err))
+
+	err = svc.UpdateSettings(context.Background(), &SystemSettings{SalesPricingResolverEnabled: false, CurrentSalesPricingResolverEnabled: &current, SalesPricingChangeReason: "rollback unified pricing"})
+	require.NoError(t, err)
+}
+
+func TestOpenAIGatewayServiceOpenAIRemoteCompactionV2EnabledDelegatesToSettings(t *testing.T) {
+	repo := &settingUpdateRepoStub{values: map[string]string{SettingKeyOpenAIRemoteCompactionV2Enabled: "false"}}
+	settings := NewSettingService(repo, &config.Config{})
+	gateway := &OpenAIGatewayService{settingService: settings}
+	require.False(t, gateway.IsOpenAIRemoteCompactionV2Enabled(context.Background()))
+	repo.values[SettingKeyOpenAIRemoteCompactionV2Enabled] = "true"
+	require.True(t, gateway.IsOpenAIRemoteCompactionV2Enabled(context.Background()))
+}
+
+func TestSettingServiceGroupUsageRollupEnabled_DefaultsOnAndPersists(t *testing.T) {
+	repo := &settingUpdateRepoStub{values: map[string]string{}}
+	svc := NewSettingService(repo, &config.Config{})
+	require.True(t, svc.IsGroupUsageRollupEnabled(context.Background()))
+	repo.values[SettingKeyGroupUsageRollupEnabled] = "false"
+	require.False(t, svc.IsGroupUsageRollupEnabled(context.Background()))
+
+	require.NoError(t, svc.UpdateSettings(context.Background(), &SystemSettings{
+		GroupUsageRollupEnabled: true,
+	}))
+	require.Equal(t, "true", repo.updates[SettingKeyGroupUsageRollupEnabled])
+}
+
+func TestSettingServiceGroupUsageRollupEnabledRetainsConfirmedDisableOnReadFailure(t *testing.T) {
+	repo := &settingUpdateRepoStub{values: map[string]string{SettingKeyGroupUsageRollupEnabled: "false"}}
+	svc := NewSettingService(repo, &config.Config{})
+	require.False(t, svc.IsGroupUsageRollupEnabled(context.Background()))
+
+	repo.getErr = context.DeadlineExceeded
+	require.False(t, svc.IsGroupUsageRollupEnabled(context.Background()))
+}
+
+func TestSettingServiceGroupUsageRollupEnabledPausesOnFirstReadFailure(t *testing.T) {
+	repo := &settingUpdateRepoStub{getErr: context.DeadlineExceeded}
+	svc := NewSettingService(repo, &config.Config{})
+	runtime := svc.GetGroupUsageRollupRuntime(context.Background())
+	require.False(t, runtime.Known)
+	require.False(t, runtime.Enabled)
 }
 
 type settingAntigravityUARepoStub struct {

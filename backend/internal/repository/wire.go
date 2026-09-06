@@ -62,12 +62,50 @@ func ProvideSchedulerCache(rdb *redis.Client, cfg *config.Config) service.Schedu
 	return newSchedulerCacheWithChunkSizes(rdb, mgetChunkSize, writeChunkSize)
 }
 
+// ProvideGroupUsageSummaryProviders exposes the worker's health-aware read
+// facade to DashboardService. The worker delegates successful reads to the
+// repository, but forces the existing realtime/degraded fallback after a
+// refresh failure.
+func ProvideGroupUsageSummaryProviders(worker *service.CustomGroupUsageRollup) []service.GroupUsageSummaryProvider {
+	if worker == nil {
+		return nil
+	}
+	return []service.GroupUsageSummaryProvider{worker}
+}
+
+// ProvideGroupRepositories adapts the concrete group repository provider to
+// the variadic dependency used by ModelPricingResolver.
+func ProvideGroupRepositories(repo service.GroupRepository) []service.GroupRepository {
+	if repo == nil {
+		return nil
+	}
+	return []service.GroupRepository{repo}
+}
+
+// ProvideGroupUsageRollupStore exposes the rollup repository through the
+// worker-facing service interface.
+func ProvideGroupUsageRollupStore(repo *GroupUsageRollupRepository) service.GroupUsageRollupStore {
+	return repo
+}
+
+// ProvideOpenAITeamBlockStore exposes the concrete Team circuit-breaker
+// repository through the service boundary used by the rate-limit runtime.
+func ProvideOpenAITeamBlockStore(repo *OpenAITeamBlockRepository) service.OpenAITeamBlockStore {
+	return repo
+}
+
 // ProviderSet is the Wire provider set for all repositories
 var ProviderSet = wire.NewSet(
+	NewGroupUsageRollupRepository,
+	ProvideGroupUsageSummaryProviders,
+	ProvideGroupRepositories,
+	ProvideGroupUsageRollupStore,
 	NewUserRepository,
 	NewAPIKeyRepository,
 	NewGroupRepository,
 	NewAccountRepository,
+	NewOpenAITeamBlockRepository,
+	ProvideOpenAITeamBlockStore,
 	NewScheduledTestPlanRepository,   // 定时测试计划仓储
 	NewScheduledTestResultRepository, // 定时测试结果仓储
 	NewProxyRepository,
@@ -154,6 +192,7 @@ var ProviderSet = wire.NewSet(
 
 	// Backup infrastructure
 	NewPgDumper,
+	NewBackupRepository,
 	NewS3BackupStoreFactory,
 
 	// HTTP service ports (DI Strategy A: return interface directly)

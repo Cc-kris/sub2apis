@@ -20,6 +20,7 @@ const (
 	EndpointResponses         = "/v1/responses"
 	EndpointImagesGenerations = "/v1/images/generations"
 	EndpointImagesEdits       = "/v1/images/edits"
+	EndpointXSearch           = "/x_search"
 	EndpointGeminiModels      = "/v1beta/models"
 )
 
@@ -52,6 +53,8 @@ func NormalizeInboundEndpoint(path string) string {
 		return EndpointImagesEdits
 	case strings.Contains(path, EndpointResponses):
 		return EndpointResponses
+	case strings.Contains(path, EndpointXSearch):
+		return EndpointXSearch
 	case strings.Contains(path, EndpointGeminiModels):
 		return EndpointGeminiModels
 	default:

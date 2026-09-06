@@ -86,6 +86,9 @@ describe('ModelDistributionChart', () => {
     const rows = wrapper.findAll('tbody tr')
     expect(rows[0].text()).toContain('model-a')
     expect(rows[1].text()).toContain('model-b')
+    const standardCost = rows[0].findAll('td')[5]
+    expect(standardCost.classes()).toContain('text-gray-600')
+    expect(standardCost.classes()).toContain('dark:text-gray-400')
 
     const options = (wrapper.vm as any).$?.setupState.doughnutOptions
     const label = options.plugins.tooltip.callbacks.label({

@@ -180,6 +180,45 @@ func TestLogger_AccessLogIncludesCoreFields(t *testing.T) {
 	}
 }
 
+func TestLogger_AccessLogIncludesGatewayStageLatencies(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	sink := initMiddlewareTestLogger(t)
+
+	r := gin.New()
+	r.Use(Logger())
+	r.GET("/api/test", func(c *gin.Context) {
+		c.Set("ops_auth_latency_ms", int64(3))
+		c.Set("ops_routing_latency_ms", int64(24000))
+		c.Set("ops_upstream_latency_ms", int64(1200))
+		c.Set("ops_response_latency_ms", int64(80))
+		c.Set("ops_time_to_first_token_ms", int64(1250))
+		c.Status(http.StatusOK)
+	})
+
+	w := httptest.NewRecorder()
+	r.ServeHTTP(w, httptest.NewRequest(http.MethodGet, "/api/test", nil))
+	if w.Code != http.StatusOK {
+		t.Fatalf("status=%d", w.Code)
+	}
+
+	for _, event := range sink.list() {
+		if event == nil || event.Message != "http request completed" {
+			continue
+		}
+		for field, want := range map[string]int64{
+			"auth_latency_ms": 3, "routing_latency_ms": 24000,
+			"upstream_latency_ms": 1200, "response_latency_ms": 80,
+			"time_to_first_token_ms": 1250,
+		} {
+			if got, ok := event.Fields[field].(int64); !ok || got != want {
+				t.Fatalf("%s=%v (%T), want %d", field, event.Fields[field], event.Fields[field], want)
+			}
+		}
+		return
+	}
+	t.Fatalf("access log event not found")
+}
+
 func TestLogger_AccessLogUsesForwardedClientIP(t *testing.T) {
 	gin.SetMode(gin.TestMode)
 	sink := initMiddlewareTestLogger(t)

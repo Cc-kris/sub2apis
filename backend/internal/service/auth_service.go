@@ -38,6 +38,7 @@ var (
 	ErrRefreshTokenReused      = infraerrors.Unauthorized("REFRESH_TOKEN_REUSED", "refresh token has been reused")
 	ErrEmailVerifyRequired     = infraerrors.BadRequest("EMAIL_VERIFY_REQUIRED", "email verification is required")
 	ErrEmailSuffixNotAllowed   = infraerrors.BadRequest("EMAIL_SUFFIX_NOT_ALLOWED", "email suffix is not allowed")
+	ErrRegistrationDomainLimit = infraerrors.New(429, "REGISTRATION_DOMAIN_LIMIT_REACHED", "registration limit for this email domain has been reached")
 	ErrRegDisabled             = infraerrors.Forbidden("REGISTRATION_DISABLED", "registration is currently disabled")
 	ErrServiceUnavailable      = infraerrors.ServiceUnavailable("SERVICE_UNAVAILABLE", "service temporarily unavailable")
 	ErrInvitationCodeRequired  = infraerrors.BadRequest("INVITATION_CODE_REQUIRED", "invitation code is required")
@@ -220,10 +221,13 @@ func (s *AuthService) RegisterWithVerification(ctx context.Context, email, passw
 		Status:       StatusActive,
 	}
 
-	if err := s.userRepo.Create(ctx, user); err != nil {
+	if err := s.createUserWithRegistrationPolicy(ctx, user); err != nil {
 		// 优先检查邮箱冲突错误（竞态条件下可能发生）
 		if errors.Is(err, ErrEmailExists) {
 			return "", nil, ErrEmailExists
+		}
+		if errors.Is(err, ErrRegistrationDomainLimit) {
+			return "", nil, ErrRegistrationDomainLimit
 		}
 		logger.LegacyPrintf("service.auth", "[Auth] Database error creating user: %v", err)
 		return "", nil, ErrServiceUnavailable
@@ -491,6 +495,9 @@ func (s *AuthService) LoginOrRegisterOAuth(ctx context.Context, email, username 
 	user, err := s.userRepo.GetByEmail(ctx, email)
 	if err != nil {
 		if errors.Is(err, ErrUserNotFound) {
+			if err := s.validateRegistrationEmailPolicy(ctx, email); err != nil {
+				return "", nil, err
+			}
 			// OAuth 首次登录视为注册（fail-close：settingService 未配置时不允许注册）
 			if s.settingService == nil || !s.settingService.IsRegistrationEnabled(ctx) {
 				return "", nil, ErrRegDisabled
@@ -525,7 +532,7 @@ func (s *AuthService) LoginOrRegisterOAuth(ctx context.Context, email, username 
 				SignupSource: signupSource,
 			}
 
-			if err := s.userRepo.Create(ctx, newUser); err != nil {
+			if err := s.createUserWithRegistrationPolicy(ctx, newUser); err != nil {
 				if errors.Is(err, ErrEmailExists) {
 					// 并发场景：GetByEmail 与 Create 之间用户被创建。
 					user, err = s.userRepo.GetByEmail(ctx, email)
@@ -533,6 +540,8 @@ func (s *AuthService) LoginOrRegisterOAuth(ctx context.Context, email, username 
 						logger.LegacyPrintf("service.auth", "[Auth] Database error getting user after conflict: %v", err)
 						return "", nil, ErrServiceUnavailable
 					}
+				} else if errors.Is(err, ErrRegistrationDomainLimit) {
+					return "", nil, ErrRegistrationDomainLimit
 				} else {
 					logger.LegacyPrintf("service.auth", "[Auth] Database error creating oauth user: %v", err)
 					return "", nil, ErrServiceUnavailable
@@ -608,6 +617,9 @@ func (s *AuthService) LoginOrRegisterOAuthWithTokenPair(ctx context.Context, ema
 	user, err := s.userRepo.GetByEmail(ctx, email)
 	if err != nil {
 		if errors.Is(err, ErrUserNotFound) {
+			if err := s.validateRegistrationEmailPolicy(ctx, email); err != nil {
+				return nil, nil, err
+			}
 			// OAuth 首次登录视为注册
 			if s.settingService == nil || (!s.settingService.IsRegistrationEnabled(ctx) && !s.canBypassRegistrationDisabledForOAuth(ctx, signupSource)) {
 				return nil, nil, ErrRegDisabled
@@ -671,13 +683,15 @@ func (s *AuthService) LoginOrRegisterOAuthWithTokenPair(ctx context.Context, ema
 				defer func() { _ = tx.Rollback() }()
 				txCtx := dbent.NewTxContext(ctx, tx)
 
-				if err := s.userRepo.Create(txCtx, newUser); err != nil {
+				if err := s.createUserWithRegistrationPolicy(txCtx, newUser); err != nil {
 					if errors.Is(err, ErrEmailExists) {
 						user, err = s.userRepo.GetByEmail(ctx, email)
 						if err != nil {
 							logger.LegacyPrintf("service.auth", "[Auth] Database error getting user after conflict: %v", err)
 							return nil, nil, ErrServiceUnavailable
 						}
+					} else if errors.Is(err, ErrRegistrationDomainLimit) {
+						return nil, nil, ErrRegistrationDomainLimit
 					} else {
 						logger.LegacyPrintf("service.auth", "[Auth] Database error creating oauth user: %v", err)
 						return nil, nil, ErrServiceUnavailable
@@ -698,13 +712,15 @@ func (s *AuthService) LoginOrRegisterOAuthWithTokenPair(ctx context.Context, ema
 					s.bindOAuthAffiliate(ctx, user.ID, affiliateCode)
 				}
 			} else {
-				if err := s.userRepo.Create(ctx, newUser); err != nil {
+				if err := s.createUserWithRegistrationPolicy(ctx, newUser); err != nil {
 					if errors.Is(err, ErrEmailExists) {
 						user, err = s.userRepo.GetByEmail(ctx, email)
 						if err != nil {
 							logger.LegacyPrintf("service.auth", "[Auth] Database error getting user after conflict: %v", err)
 							return nil, nil, ErrServiceUnavailable
 						}
+					} else if errors.Is(err, ErrRegistrationDomainLimit) {
+						return nil, nil, ErrRegistrationDomainLimit
 					} else {
 						logger.LegacyPrintf("service.auth", "[Auth] Database error creating oauth user: %v", err)
 						return nil, nil, ErrServiceUnavailable
@@ -1067,6 +1083,17 @@ func (s *AuthService) validateRegistrationEmailPolicy(ctx context.Context, email
 		return buildEmailSuffixNotAllowedError(whitelist)
 	}
 	return nil
+}
+
+func (s *AuthService) createUserWithRegistrationPolicy(ctx context.Context, user *User) error {
+	if s.settingService != nil && s.settingService.IsRegistrationDomainLimitEnabled(ctx) {
+		creator, ok := s.userRepo.(RegistrationDomainLimitedUserCreator)
+		if !ok {
+			return ErrServiceUnavailable
+		}
+		return creator.CreateWithRegistrationDomainLimit(ctx, user, s.settingService.GetRegistrationDomainLimitPerDomain(ctx))
+	}
+	return s.userRepo.Create(ctx, user)
 }
 
 func buildEmailSuffixNotAllowedError(whitelist []string) error {

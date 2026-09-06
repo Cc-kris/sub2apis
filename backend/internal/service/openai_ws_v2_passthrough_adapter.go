@@ -358,6 +358,11 @@ func (s *OpenAIGatewayService) proxyResponsesWebSocketV2Passthrough(
 			statusCode,
 			truncateOpenAIWSLogValue(err.Error(), openAIWSLogValueMaxLen),
 		)
+		var dialErr *openAIWSDialError
+		if errors.As(err, &dialErr) && dialErr != nil && account.Platform == PlatformOpenAI && IsOpenAITeamWorkspaceDeactivated(dialErr.StatusCode, dialErr.ResponseBody) {
+			s.handleOpenAIAccountUpstreamError(ctx, account, dialErr.StatusCode, dialErr.ResponseHeaders, dialErr.ResponseBody)
+			return &UpstreamFailoverError{StatusCode: dialErr.StatusCode, ResponseHeaders: cloneHeader(dialErr.ResponseHeaders), ResponseBody: append([]byte(nil), dialErr.ResponseBody...)}
+		}
 		return s.mapOpenAIWSPassthroughDialError(err, statusCode, handshakeHeaders)
 	}
 	defer func() {

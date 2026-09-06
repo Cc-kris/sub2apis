@@ -1324,6 +1324,11 @@ func (s *OpenAIGatewayService) buildOpenAIWSHeaders(
 		if v := strings.TrimSpace(c.Request.Header.Get("accept-language")); v != "" {
 			headers.Set("accept-language", v)
 		}
+		for _, value := range c.Request.Header.Values("x-codex-beta-features") {
+			if value = strings.TrimSpace(value); value != "" {
+				headers.Add("x-codex-beta-features", value)
+			}
+		}
 	}
 	// OAuth 账号：将 apiKeyID 混入 session 标识符，防止跨用户会话碰撞。
 	if account != nil && account.Type == AccountTypeOAuth {
@@ -1379,6 +1384,7 @@ func (s *OpenAIGatewayService) buildOpenAIWSHeaders(
 	if account != nil && account.Type == AccountTypeOAuth && !openai.IsCodexCLIRequest(headers.Get("user-agent")) {
 		headers.Set("user-agent", codexCLIUserAgent)
 	}
+	resolveOpenAIAgentIdentity(account).ApplyTo(headers, nil)
 
 	return headers, sessionResolution
 }
@@ -2108,8 +2114,14 @@ func (s *OpenAIGatewayService) forwardOpenAIWSV2(
 			account.ProxyID != nil && account.Proxy != nil,
 		)
 		var dialErr *openAIWSDialError
-		if errors.As(err, &dialErr) && dialErr != nil && dialErr.StatusCode == http.StatusTooManyRequests {
-			s.persistOpenAIWSRateLimitSignal(ctx, account, dialErr.ResponseHeaders, nil, "rate_limit_exceeded", "rate_limit_error", strings.TrimSpace(err.Error()))
+		if errors.As(err, &dialErr) && dialErr != nil {
+			if dialErr.StatusCode == http.StatusTooManyRequests {
+				s.persistOpenAIWSRateLimitSignal(ctx, account, dialErr.ResponseHeaders, nil, "rate_limit_exceeded", "rate_limit_error", strings.TrimSpace(err.Error()))
+			}
+			if account.Platform == PlatformOpenAI && IsOpenAITeamWorkspaceDeactivated(dialErr.StatusCode, dialErr.ResponseBody) {
+				s.handleOpenAIAccountUpstreamError(ctx, account, dialErr.StatusCode, dialErr.ResponseHeaders, dialErr.ResponseBody)
+				return nil, &UpstreamFailoverError{StatusCode: dialErr.StatusCode, ResponseBody: append([]byte(nil), dialErr.ResponseBody...), ResponseHeaders: cloneHeader(dialErr.ResponseHeaders)}
+			}
 		}
 		return nil, wrapOpenAIWSFallback(classifyOpenAIWSAcquireError(err), err)
 	}
@@ -2732,6 +2744,25 @@ func (s *OpenAIGatewayService) ProxyResponsesWebSocketFromClient(
 		if !gjson.ValidBytes(trimmed) {
 			return openAIWSClientPayload{}, NewOpenAIWSClientCloseError(coderws.StatusPolicyViolation, "invalid websocket request payload", errors.New("invalid json"))
 		}
+		if compaction := ParseOpenAICompactionContext(trimmed, nil, "/v1/responses"); compaction.NativeResponses && s.settingService != nil && !s.settingService.IsOpenAIRemoteCompactionV2Enabled(ctx) {
+			eventBytes, _ := json.Marshal(map[string]any{
+				"type": "error",
+				"error": map[string]string{
+					"code":    "remote_compaction_v2_disabled",
+					"message": "OpenAI Remote Compaction V2 is temporarily disabled",
+				},
+			})
+			if len(eventBytes) > 0 {
+				writeCtx, cancel := context.WithTimeout(ctx, s.openAIWSWriteTimeout())
+				_ = clientConn.Write(writeCtx, coderws.MessageText, eventBytes)
+				cancel()
+			}
+			return openAIWSClientPayload{}, NewOpenAIWSClientCloseError(
+				coderws.StatusTryAgainLater,
+				"remote_compaction_v2_disabled",
+				nil,
+			)
+		}
 
 		values := gjson.GetManyBytes(trimmed, "type", "model", "prompt_cache_key", "previous_response_id")
 		eventType := strings.TrimSpace(values[0].String())
@@ -3149,8 +3180,13 @@ func (s *OpenAIGatewayService) ProxyResponsesWebSocketFromClient(
 				account.ProxyID != nil && account.Proxy != nil,
 			)
 			var dialErr *openAIWSDialError
-			if errors.As(acquireErr, &dialErr) && dialErr != nil && dialErr.StatusCode == http.StatusTooManyRequests {
-				s.persistOpenAIWSRateLimitSignal(ctx, account, dialErr.ResponseHeaders, nil, "rate_limit_exceeded", "rate_limit_error", strings.TrimSpace(acquireErr.Error()))
+			if errors.As(acquireErr, &dialErr) && dialErr != nil {
+				if dialErr.StatusCode == http.StatusTooManyRequests {
+					s.persistOpenAIWSRateLimitSignal(ctx, account, dialErr.ResponseHeaders, nil, "rate_limit_exceeded", "rate_limit_error", strings.TrimSpace(acquireErr.Error()))
+				}
+				if failover := s.openAIWSTeamDialFailover(ctx, account, dialErr); failover != nil {
+					return nil, failover
+				}
 			}
 			if errors.Is(acquireErr, errOpenAIWSPreferredConnUnavailable) {
 				return nil, NewOpenAIWSClientCloseError(
@@ -4122,6 +4158,22 @@ func (s *OpenAIGatewayService) ProxyResponsesWebSocketFromClient(
 	}
 }
 
+// openAIWSTeamDialFailover keeps the native ctx_pool handshake path on the
+// same durable Team breaker contract as passthrough and HTTP bridge paths.
+func (s *OpenAIGatewayService) openAIWSTeamDialFailover(ctx context.Context, account *Account, dialErr *openAIWSDialError) *UpstreamFailoverError {
+	if account == nil || dialErr == nil || account.Platform != PlatformOpenAI ||
+		!IsOpenAITeamWorkspaceDeactivated(dialErr.StatusCode, dialErr.ResponseBody) {
+		return nil
+	}
+	s.handleOpenAIAccountUpstreamError(ctx, account, dialErr.StatusCode, dialErr.ResponseHeaders, dialErr.ResponseBody)
+	return &UpstreamFailoverError{
+		StatusCode:        dialErr.StatusCode,
+		ResponseBody:      append([]byte(nil), dialErr.ResponseBody...),
+		ResponseHeaders:   cloneHeader(dialErr.ResponseHeaders),
+		NextAccountAction: NextAccountRetry,
+	}
+}
+
 func (s *OpenAIGatewayService) isOpenAIWSGeneratePrewarmEnabled() bool {
 	return s != nil && s.cfg != nil && s.cfg.Gateway.OpenAIWS.PrewarmGenerateEnabled
 }
@@ -4446,15 +4498,9 @@ func populateOpenAIUsageFromResponseJSON(body []byte, usage *OpenAIUsage) {
 	if usage == nil || len(body) == 0 {
 		return
 	}
-	values := gjson.GetManyBytes(
-		body,
-		"usage.input_tokens",
-		"usage.output_tokens",
-		"usage.input_tokens_details.cached_tokens",
-	)
-	usage.InputTokens = int(values[0].Int())
-	usage.OutputTokens = int(values[1].Int())
-	usage.CacheReadInputTokens = int(values[2].Int())
+	if parsed, ok := extractOpenAIUsageFromJSONBytes(body); ok {
+		*usage = parsed
+	}
 }
 
 func getOpenAIGroupIDFromContext(c *gin.Context) int64 {

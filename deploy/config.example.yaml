@@ -107,7 +107,9 @@ security:
       - "api.openai.com"
       - "api.anthropic.com"
       - "api.kimi.com"
+      - "api.moonshot.cn"
       - "open.bigmodel.cn"
+      - "api.deepseek.com"
       - "api.minimaxi.com"
       - "generativelanguage.googleapis.com"
       - "cloudcode-pa.googleapis.com"
@@ -163,9 +165,9 @@ gateway:
   # Timeout for waiting upstream response headers (seconds)
   # 等待上游响应头超时时间（秒）
   response_header_timeout: 600
-  # OpenAI/Codex upstream response header timeout (seconds, 0=disabled)
-  # OpenAI/Codex 等待上游响应头超时时间（秒，0=禁用本地响应头超时）
-  openai_response_header_timeout: 0
+  # OpenAI/Codex upstream response header timeout (seconds, default 600; 0=disabled)
+  # OpenAI/Codex 等待上游响应头超时时间（秒，默认 600；0=显式禁用）
+  openai_response_header_timeout: 600
   # Max request body size in bytes (default: 512MB)
   # 请求体最大字节数（默认 512MB）
   max_body_size: 512000000

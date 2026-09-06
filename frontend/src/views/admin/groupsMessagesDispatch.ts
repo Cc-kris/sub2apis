@@ -1,5 +1,16 @@
 import type { OpenAIMessagesDispatchModelConfig } from "@/types";
 
+const messagesDispatchPlatforms = new Set([
+  "openai",
+  "kimi",
+  "zhipu",
+  "deepseek",
+]);
+
+export function supportsMessagesDispatchPlatform(platform: string): boolean {
+  return messagesDispatchPlatforms.has(platform);
+}
+
 export interface MessagesDispatchMappingRow {
   claude_model: string;
   target_model: string;

@@ -45,6 +45,7 @@
               v-model="localStartDate"
               :max="localEndDate || tomorrow"
               class="date-picker-input"
+              style="color-scheme: light dark"
               @change="onDateChange"
             />
           </div>
@@ -59,6 +60,7 @@
               :min="localStartDate"
               :max="tomorrow"
               class="date-picker-input"
+              style="color-scheme: light dark"
               @change="onDateChange"
             />
           </div>

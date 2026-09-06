@@ -445,6 +445,71 @@ func TestAdminService_UpdateGroup_ClearsMessagesDispatchFieldsWhenPlatformChange
 	require.Equal(t, OpenAIMessagesDispatchModelConfig{}, repo.updated.MessagesDispatchModelConfig)
 }
 
+func TestAdminService_CreateGroup_PreservesMessagesDispatchFieldsForDomesticOpenAICompatiblePlatform(t *testing.T) {
+	for _, platform := range []string{PlatformKimi, PlatformZhipu, PlatformDeepSeek} {
+		t.Run(platform, func(t *testing.T) {
+			repo := &groupRepoStubForAdmin{}
+			svc := &adminServiceImpl{groupRepo: repo}
+
+			group, err := svc.CreateGroup(context.Background(), &CreateGroupInput{
+				Name:                  platform + "-group",
+				Description:           "openai-compatible",
+				Platform:              platform,
+				RateMultiplier:        1.0,
+				AllowMessagesDispatch: true,
+				RequireOAuthOnly:      true,
+				RequirePrivacySet:     true,
+				DefaultMappedModel:    "domestic-chat",
+				MessagesDispatchModelConfig: OpenAIMessagesDispatchModelConfig{
+					SonnetMappedModel: "domestic-chat",
+				},
+			})
+			require.NoError(t, err)
+			require.NotNil(t, group)
+			require.NotNil(t, repo.created)
+			require.True(t, repo.created.AllowMessagesDispatch)
+			require.False(t, repo.created.RequireOAuthOnly)
+			require.False(t, repo.created.RequirePrivacySet)
+			require.Equal(t, "domestic-chat", repo.created.DefaultMappedModel)
+			require.Equal(t, "domestic-chat", repo.created.MessagesDispatchModelConfig.SonnetMappedModel)
+		})
+	}
+}
+
+func TestAdminService_UpdateGroup_PreservesMessagesDispatchFieldsWhenSwitchingToDomesticPlatform(t *testing.T) {
+	existingGroup := &Group{
+		ID:       1,
+		Name:     "existing-openai-group",
+		Platform: PlatformOpenAI,
+		Status:   StatusActive,
+	}
+	repo := &groupRepoStubForAdmin{getByID: existingGroup}
+	svc := &adminServiceImpl{groupRepo: repo}
+	allowMessagesDispatch := true
+	requireOAuthOnly := true
+	requirePrivacySet := true
+	defaultMappedModel := "deepseek-chat"
+
+	group, err := svc.UpdateGroup(context.Background(), 1, &UpdateGroupInput{
+		Platform:              PlatformDeepSeek,
+		AllowMessagesDispatch: &allowMessagesDispatch,
+		RequireOAuthOnly:      &requireOAuthOnly,
+		RequirePrivacySet:     &requirePrivacySet,
+		DefaultMappedModel:    &defaultMappedModel,
+		MessagesDispatchModelConfig: &OpenAIMessagesDispatchModelConfig{
+			SonnetMappedModel: "deepseek-chat",
+		},
+	})
+	require.NoError(t, err)
+	require.NotNil(t, group)
+	require.Equal(t, PlatformDeepSeek, repo.updated.Platform)
+	require.True(t, repo.updated.AllowMessagesDispatch)
+	require.False(t, repo.updated.RequireOAuthOnly)
+	require.False(t, repo.updated.RequirePrivacySet)
+	require.Equal(t, "deepseek-chat", repo.updated.DefaultMappedModel)
+	require.Equal(t, "deepseek-chat", repo.updated.MessagesDispatchModelConfig.SonnetMappedModel)
+}
+
 func TestAdminService_ListGroups_WithSearch(t *testing.T) {
 	// 测试：
 	// 1. search 参数正常传递到 repository 层
@@ -1026,4 +1091,39 @@ func TestAdminService_UpdateGroup_RejectsNegativeVideoRateMultiplier(t *testing.
 	_, err := svc.UpdateGroup(context.Background(), 1, &UpdateGroupInput{VideoRateMultiplier: &negative})
 
 	require.ErrorContains(t, err, "video_rate_multiplier must be >= 0")
+}
+
+func TestAdminServiceGroupPricingWritesBlockedWhenSalesPricingResolverDisabled(t *testing.T) {
+	settings := NewSettingService(&settingUpdateRepoStub{values: map[string]string{SettingKeySalesPricingResolverEnabled: "false"}}, nil)
+	svc := &adminServiceImpl{groupRepo: &groupRepoStubForAdmin{getByID: &Group{ID: 1, Name: "existing", Platform: PlatformAnthropic}}, settingService: settings}
+
+	_, err := svc.CreateGroup(context.Background(), &CreateGroupInput{Name: "blocked", RateMultiplier: 1, ModelPricing: map[string]GroupModelPricing{"gpt-5": {}}})
+	require.ErrorIs(t, err, ErrSalesPricingResolverDisabled)
+
+	enabled := true
+	_, err = svc.UpdateGroup(context.Background(), 1, &UpdateGroupInput{LongContextPricingEnabled: &enabled})
+	require.ErrorIs(t, err, ErrSalesPricingResolverDisabled)
+	require.Nil(t, svc.groupRepo.(*groupRepoStubForAdmin).updated)
+}
+
+func TestAdminServiceGroupNonPricingUpdateAllowedWhenSalesPricingResolverDisabled(t *testing.T) {
+	settings := NewSettingService(&settingUpdateRepoStub{values: map[string]string{SettingKeySalesPricingResolverEnabled: "false"}}, nil)
+	repo := &groupRepoStubForAdmin{getByID: &Group{ID: 1, Name: "existing", Platform: PlatformAnthropic}}
+	svc := &adminServiceImpl{groupRepo: repo, settingService: settings}
+
+	group, err := svc.UpdateGroup(context.Background(), 1, &UpdateGroupInput{Name: "renamed"})
+	require.NoError(t, err)
+	require.Equal(t, "renamed", group.Name)
+}
+
+func TestCreateGroupLongContextPricingPresenceIsFrozenWhenResolverDisabled(t *testing.T) {
+	require.False(t, createGroupHasSalesPricingMutation(&CreateGroupInput{RateMultiplier: 1}))
+	require.True(t, createGroupHasSalesPricingMutation(&CreateGroupInput{RateMultiplier: 1, LongContextPricingProvided: true, LongContextPricingEnabled: false}))
+	require.True(t, createGroupHasSalesPricingMutation(&CreateGroupInput{RateMultiplier: 1, LongContextPricingProvided: true, LongContextPricingEnabled: true}))
+}
+
+func TestAdminServiceDeleteGroupBlockedWhenSalesPricingResolverDisabled(t *testing.T) {
+	settings := NewSettingService(&settingUpdateRepoStub{values: map[string]string{SettingKeySalesPricingResolverEnabled: "false"}}, nil)
+	svc := &adminServiceImpl{settingService: settings}
+	require.ErrorIs(t, svc.DeleteGroup(context.Background(), 1), ErrSalesPricingResolverDisabled)
 }

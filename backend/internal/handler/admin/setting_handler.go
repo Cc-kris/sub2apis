@@ -1,12 +1,14 @@
 package admin
 
 import (
+	"bytes"
 	"context"
 	"crypto/rand"
 	"encoding/hex"
 	"encoding/json"
 	"errors"
 	"fmt"
+	"io"
 	"log/slog"
 	"net/http"
 	"regexp"
@@ -135,6 +137,8 @@ func (h *SettingHandler) GetSettings(c *gin.Context) {
 		RegistrationEnabled:                     settings.RegistrationEnabled,
 		EmailVerifyEnabled:                      settings.EmailVerifyEnabled,
 		RegistrationEmailSuffixWhitelist:        settings.RegistrationEmailSuffixWhitelist,
+		RegistrationDomainLimitEnabled:          settings.RegistrationDomainLimitEnabled,
+		RegistrationDomainLimitPerDomain:        settings.RegistrationDomainLimitPerDomain,
 		PromoCodeEnabled:                        settings.PromoCodeEnabled,
 		PasswordResetEnabled:                    settings.PasswordResetEnabled,
 		FrontendURL:                             settings.FrontendURL,
@@ -314,11 +318,15 @@ func (h *SettingHandler) GetSettings(c *gin.Context) {
 		ChannelMonitorPublicEnabled:          settings.ChannelMonitorPublicEnabled,
 		ChannelMonitorDefaultIntervalSeconds: settings.ChannelMonitorDefaultIntervalSeconds,
 
-		AvailableChannelsEnabled:    settings.AvailableChannelsEnabled,
-		ModelSquareEnabled:          settings.ModelSquareEnabled,
-		SalesPricingVersion:         settings.SalesPricingVersion,
-		SalesPricingShadowStartedAt: settings.SalesPricingShadowStartedAt,
-		SalesPricingV2EnabledAt:     settings.SalesPricingV2EnabledAt,
+		AvailableChannelsEnabled:        settings.AvailableChannelsEnabled,
+		ModelSquareEnabled:              settings.ModelSquareEnabled,
+		OpenAIRemoteCompactionV2Enabled: settings.OpenAIRemoteCompactionV2Enabled,
+		GroupUsageRollupEnabled:         settings.GroupUsageRollupEnabled,
+		SalesPricingResolverEnabled:     settings.SalesPricingResolverEnabled,
+		OpenAITeamLinkedResolverEnabled: settings.OpenAITeamLinkedResolverEnabled,
+		SalesPricingVersion:             settings.SalesPricingVersion,
+		SalesPricingShadowStartedAt:     settings.SalesPricingShadowStartedAt,
+		SalesPricingV2EnabledAt:         settings.SalesPricingV2EnabledAt,
 
 		AffiliateEnabled: settings.AffiliateEnabled,
 	}
@@ -409,6 +417,8 @@ type UpdateSettingsRequest struct {
 	RegistrationEnabled              bool                         `json:"registration_enabled"`
 	EmailVerifyEnabled               bool                         `json:"email_verify_enabled"`
 	RegistrationEmailSuffixWhitelist []string                     `json:"registration_email_suffix_whitelist"`
+	RegistrationDomainLimitEnabled   bool                         `json:"registration_domain_limit_enabled"`
+	RegistrationDomainLimitPerDomain int                          `json:"registration_domain_limit_per_domain"`
 	PromoCodeEnabled                 bool                         `json:"promo_code_enabled"`
 	PasswordResetEnabled             bool                         `json:"password_reset_enabled"`
 	FrontendURL                      string                       `json:"frontend_url"`
@@ -668,10 +678,15 @@ type UpdateSettingsRequest struct {
 	ChannelMonitorDefaultIntervalSeconds *int  `json:"channel_monitor_default_interval_seconds"`
 
 	// Available Channels feature switch (user-facing)
-	AvailableChannelsEnabled *bool                        `json:"available_channels_enabled"`
-	ModelSquareEnabled       *bool                        `json:"model_square_enabled"`
-	SalesPricingVersion      *service.SalesPricingVersion `json:"sales_pricing_version"`
-	SalesPricingChangeReason string                       `json:"sales_pricing_change_reason"`
+	AvailableChannelsEnabled        *bool                        `json:"available_channels_enabled"`
+	ModelSquareEnabled              *bool                        `json:"model_square_enabled"`
+	OpenAIRemoteCompactionV2Enabled *bool                        `json:"openai_remote_compaction_v2_enabled"`
+	GroupUsageRollupEnabled         *bool                        `json:"group_usage_rollup_enabled"`
+	SalesPricingResolverEnabled     *bool                        `json:"sales_pricing_resolver_enabled"`
+	OpenAITeamLinkedResolverEnabled *bool                        `json:"openai_team_linked_resolver_enabled"`
+	OpenAITeamLinkedChangeReason    string                       `json:"openai_team_linked_change_reason"`
+	SalesPricingVersion             *service.SalesPricingVersion `json:"sales_pricing_version"`
+	SalesPricingChangeReason        string                       `json:"sales_pricing_change_reason"`
 
 	// Affiliate (邀请返利) feature switch
 	AffiliateEnabled *bool `json:"affiliate_enabled"`
@@ -695,9 +710,42 @@ type UpdateSettingsRequest struct {
 	AuthSourceDingTalkPlatformQuotas map[string]*service.DefaultPlatformQuotaSetting `json:"auth_source_default_dingtalk_platform_quotas"`
 }
 
+type xSearchPriceRequest struct {
+	PricePerRequest string `json:"price_per_request"`
+}
+
+// GetXSearchPrice returns the admin-only x_search per-request price contract.
+func (h *SettingHandler) GetXSearchPrice(c *gin.Context) {
+	price, err := h.settingService.GetXSearchPricePerRequest(c.Request.Context())
+	if err != nil {
+		response.ErrorFrom(c, err)
+		return
+	}
+	response.Success(c, gin.H{"price_per_request": price})
+}
+
+// UpdateXSearchPrice validates and persists the admin-only x_search price.
+func (h *SettingHandler) UpdateXSearchPrice(c *gin.Context) {
+	var req xSearchPriceRequest
+	if err := c.ShouldBindJSON(&req); err != nil {
+		response.BadRequest(c, "price_per_request is required")
+		return
+	}
+	price, err := h.settingService.SetXSearchPricePerRequest(c.Request.Context(), req.PricePerRequest)
+	if err != nil {
+		response.ErrorFrom(c, err)
+		return
+	}
+	response.Success(c, gin.H{"price_per_request": price})
+}
+
 // UpdateSettings 更新系统设置
 // PUT /api/v1/admin/settings
 func (h *SettingHandler) UpdateSettings(c *gin.Context) {
+	rawBody, _ := io.ReadAll(c.Request.Body)
+	c.Request.Body = io.NopCloser(bytes.NewReader(rawBody))
+	var supplied map[string]json.RawMessage
+	_ = json.Unmarshal(rawBody, &supplied)
 	var req UpdateSettingsRequest
 	if err := c.ShouldBindJSON(&req); err != nil {
 		response.BadRequest(c, "Invalid request: "+err.Error())
@@ -1542,6 +1590,19 @@ func (h *SettingHandler) UpdateSettings(c *gin.Context) {
 		}
 	}
 
+	if _, ok := supplied["registration_domain_limit_enabled"]; !ok {
+		req.RegistrationDomainLimitEnabled = previousSettings.RegistrationDomainLimitEnabled
+	}
+	if _, ok := supplied["registration_domain_limit_per_domain"]; !ok {
+		// Older clients omit this field. Preserve the stored value when present,
+		// otherwise use the documented default. An explicitly supplied zero is
+		// left untouched and is rejected by service validation.
+		req.RegistrationDomainLimitPerDomain = previousSettings.RegistrationDomainLimitPerDomain
+		if req.RegistrationDomainLimitPerDomain == 0 {
+			req.RegistrationDomainLimitPerDomain = 3
+		}
+	}
+
 	settings := &service.SystemSettings{
 		// 系统全局 platform quota 默认值（整体替换语义）
 		DefaultPlatformQuotas: req.DefaultPlatformQuotas,
@@ -1549,6 +1610,8 @@ func (h *SettingHandler) UpdateSettings(c *gin.Context) {
 		RegistrationEnabled:                   req.RegistrationEnabled,
 		EmailVerifyEnabled:                    req.EmailVerifyEnabled,
 		RegistrationEmailSuffixWhitelist:      req.RegistrationEmailSuffixWhitelist,
+		RegistrationDomainLimitEnabled:        req.RegistrationDomainLimitEnabled,
+		RegistrationDomainLimitPerDomain:      req.RegistrationDomainLimitPerDomain,
 		PromoCodeEnabled:                      req.PromoCodeEnabled,
 		PasswordResetEnabled:                  req.PasswordResetEnabled,
 		FrontendURL:                           req.FrontendURL,
@@ -1854,16 +1917,43 @@ func (h *SettingHandler) UpdateSettings(c *gin.Context) {
 			}
 			return previousSettings.ModelSquareEnabled
 		}(),
+		OpenAIRemoteCompactionV2Enabled: func() bool {
+			if req.OpenAIRemoteCompactionV2Enabled != nil {
+				return *req.OpenAIRemoteCompactionV2Enabled
+			}
+			return previousSettings.OpenAIRemoteCompactionV2Enabled
+		}(),
+		GroupUsageRollupEnabled: func() bool {
+			if req.GroupUsageRollupEnabled != nil {
+				return *req.GroupUsageRollupEnabled
+			}
+			return previousSettings.GroupUsageRollupEnabled
+		}(),
+		SalesPricingResolverEnabled: func() bool {
+			if req.SalesPricingResolverEnabled != nil {
+				return *req.SalesPricingResolverEnabled
+			}
+			return previousSettings.SalesPricingResolverEnabled
+		}(),
+		OpenAITeamLinkedResolverEnabled: func() bool {
+			if req.OpenAITeamLinkedResolverEnabled != nil {
+				return *req.OpenAITeamLinkedResolverEnabled
+			}
+			return previousSettings.OpenAITeamLinkedResolverEnabled
+		}(),
+		CurrentSalesPricingResolverEnabled:     func() *bool { v := previousSettings.SalesPricingResolverEnabled; return &v }(),
+		CurrentOpenAITeamLinkedResolverEnabled: func() *bool { v := previousSettings.OpenAITeamLinkedResolverEnabled; return &v }(),
 		SalesPricingVersion: func() service.SalesPricingVersion {
 			if req.SalesPricingVersion != nil {
 				return *req.SalesPricingVersion
 			}
 			return previousSettings.SalesPricingVersion
 		}(),
-		CurrentSalesPricingVersion:  previousSettings.SalesPricingVersion,
-		SalesPricingShadowStartedAt: previousSettings.SalesPricingShadowStartedAt,
-		SalesPricingV2EnabledAt:     previousSettings.SalesPricingV2EnabledAt,
-		SalesPricingChangeReason:    strings.TrimSpace(req.SalesPricingChangeReason),
+		CurrentSalesPricingVersion:   previousSettings.SalesPricingVersion,
+		SalesPricingShadowStartedAt:  previousSettings.SalesPricingShadowStartedAt,
+		SalesPricingV2EnabledAt:      previousSettings.SalesPricingV2EnabledAt,
+		SalesPricingChangeReason:     strings.TrimSpace(req.SalesPricingChangeReason),
+		OpenAITeamLinkedChangeReason: strings.TrimSpace(req.OpenAITeamLinkedChangeReason),
 		AffiliateEnabled: func() bool {
 			if req.AffiliateEnabled != nil {
 				return *req.AffiliateEnabled
@@ -1943,6 +2033,10 @@ func (h *SettingHandler) UpdateSettings(c *gin.Context) {
 		response.ErrorFrom(c, err)
 		return
 	}
+	// The core settings write is already committed at this point. Record its
+	// actual state before optional Fast Policy or payment side effects so a
+	// later failure cannot hide an applied runtime rollback from the audit log.
+	h.auditSettingsUpdate(c, previousSettings, settings, previousAuthSourceDefaults, authSourceDefaults, req)
 
 	// Update OpenAI fast policy (stored under dedicated key, only when provided).
 	if req.OpenAIFastPolicySettings != nil {
@@ -1988,8 +2082,6 @@ func (h *SettingHandler) UpdateSettings(c *gin.Context) {
 		}
 	}
 
-	h.auditSettingsUpdate(c, previousSettings, settings, previousAuthSourceDefaults, authSourceDefaults, req)
-
 	// 重新获取设置返回
 	updatedSettings, err := h.settingService.GetAllSettings(c.Request.Context())
 	if err != nil {
@@ -2023,6 +2115,8 @@ func (h *SettingHandler) UpdateSettings(c *gin.Context) {
 		RegistrationEnabled:                     updatedSettings.RegistrationEnabled,
 		EmailVerifyEnabled:                      updatedSettings.EmailVerifyEnabled,
 		RegistrationEmailSuffixWhitelist:        updatedSettings.RegistrationEmailSuffixWhitelist,
+		RegistrationDomainLimitEnabled:          updatedSettings.RegistrationDomainLimitEnabled,
+		RegistrationDomainLimitPerDomain:        updatedSettings.RegistrationDomainLimitPerDomain,
 		PromoCodeEnabled:                        updatedSettings.PromoCodeEnabled,
 		PasswordResetEnabled:                    updatedSettings.PasswordResetEnabled,
 		FrontendURL:                             updatedSettings.FrontendURL,
@@ -2199,11 +2293,15 @@ func (h *SettingHandler) UpdateSettings(c *gin.Context) {
 		ChannelMonitorPublicEnabled:          updatedSettings.ChannelMonitorPublicEnabled,
 		ChannelMonitorDefaultIntervalSeconds: updatedSettings.ChannelMonitorDefaultIntervalSeconds,
 
-		AvailableChannelsEnabled:    updatedSettings.AvailableChannelsEnabled,
-		ModelSquareEnabled:          updatedSettings.ModelSquareEnabled,
-		SalesPricingVersion:         updatedSettings.SalesPricingVersion,
-		SalesPricingShadowStartedAt: updatedSettings.SalesPricingShadowStartedAt,
-		SalesPricingV2EnabledAt:     updatedSettings.SalesPricingV2EnabledAt,
+		AvailableChannelsEnabled:        updatedSettings.AvailableChannelsEnabled,
+		ModelSquareEnabled:              updatedSettings.ModelSquareEnabled,
+		OpenAIRemoteCompactionV2Enabled: updatedSettings.OpenAIRemoteCompactionV2Enabled,
+		GroupUsageRollupEnabled:         updatedSettings.GroupUsageRollupEnabled,
+		SalesPricingResolverEnabled:     updatedSettings.SalesPricingResolverEnabled,
+		OpenAITeamLinkedResolverEnabled: updatedSettings.OpenAITeamLinkedResolverEnabled,
+		SalesPricingVersion:             updatedSettings.SalesPricingVersion,
+		SalesPricingShadowStartedAt:     updatedSettings.SalesPricingShadowStartedAt,
+		SalesPricingV2EnabledAt:         updatedSettings.SalesPricingV2EnabledAt,
 
 		AffiliateEnabled: updatedSettings.AffiliateEnabled,
 
@@ -2269,6 +2367,7 @@ func (h *SettingHandler) auditSettingsUpdate(c *gin.Context, before *service.Sys
 		"role", role,
 		"changed", changed,
 		"sales_pricing_change_reason", strings.TrimSpace(req.SalesPricingChangeReason),
+		"openai_team_linked_change_reason", strings.TrimSpace(req.OpenAITeamLinkedChangeReason),
 	)
 }
 
@@ -2282,6 +2381,12 @@ func diffSettings(before *service.SystemSettings, after *service.SystemSettings,
 	}
 	if !equalStringSlice(before.RegistrationEmailSuffixWhitelist, after.RegistrationEmailSuffixWhitelist) {
 		changed = append(changed, "registration_email_suffix_whitelist")
+	}
+	if before.RegistrationDomainLimitEnabled != after.RegistrationDomainLimitEnabled {
+		changed = append(changed, "registration_domain_limit_enabled")
+	}
+	if before.RegistrationDomainLimitPerDomain != after.RegistrationDomainLimitPerDomain {
+		changed = append(changed, "registration_domain_limit_per_domain")
 	}
 	if before.PromoCodeEnabled != after.PromoCodeEnabled {
 		changed = append(changed, "promo_code_enabled")
@@ -2706,6 +2811,18 @@ func diffSettings(before *service.SystemSettings, after *service.SystemSettings,
 	}
 	if before.ModelSquareEnabled != after.ModelSquareEnabled {
 		changed = append(changed, "model_square_enabled")
+	}
+	if before.OpenAIRemoteCompactionV2Enabled != after.OpenAIRemoteCompactionV2Enabled {
+		changed = append(changed, "openai_remote_compaction_v2_enabled")
+	}
+	if before.GroupUsageRollupEnabled != after.GroupUsageRollupEnabled {
+		changed = append(changed, "group_usage_rollup_enabled")
+	}
+	if before.SalesPricingResolverEnabled != after.SalesPricingResolverEnabled {
+		changed = append(changed, "sales_pricing_resolver_enabled")
+	}
+	if before.OpenAITeamLinkedResolverEnabled != after.OpenAITeamLinkedResolverEnabled {
+		changed = append(changed, "openai_team_linked_resolver_enabled")
 	}
 	if before.SalesPricingVersion != after.SalesPricingVersion {
 		changed = append(changed, "sales_pricing_version")

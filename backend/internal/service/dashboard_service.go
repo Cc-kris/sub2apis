@@ -40,20 +40,28 @@ type dashboardStatsCacheEntry struct {
 
 // DashboardService 提供管理员仪表盘统计服务。
 type DashboardService struct {
-	usageRepo      UsageLogRepository
-	aggRepo        DashboardAggregationRepository
-	cache          DashboardStatsCache
-	cacheFreshTTL  time.Duration
-	cacheTTL       time.Duration
-	refreshTimeout time.Duration
-	refreshing     int32
-	aggEnabled     bool
-	aggInterval    time.Duration
-	aggLookback    time.Duration
-	aggUsageDays   int
+	usageRepo          UsageLogRepository
+	groupUsageProvider GroupUsageSummaryProvider
+	settingService     *SettingService
+	aggRepo            DashboardAggregationRepository
+	cache              DashboardStatsCache
+	cacheFreshTTL      time.Duration
+	cacheTTL           time.Duration
+	refreshTimeout     time.Duration
+	refreshing         int32
+	aggEnabled         bool
+	aggInterval        time.Duration
+	aggLookback        time.Duration
+	aggUsageDays       int
 }
 
-func NewDashboardService(usageRepo UsageLogRepository, aggRepo DashboardAggregationRepository, cache DashboardStatsCache, cfg *config.Config) *DashboardService {
+func (s *DashboardService) SetSettingService(settingService *SettingService) {
+	if s != nil {
+		s.settingService = settingService
+	}
+}
+
+func NewDashboardService(usageRepo UsageLogRepository, aggRepo DashboardAggregationRepository, cache DashboardStatsCache, cfg *config.Config, providers ...GroupUsageSummaryProvider) *DashboardService {
 	freshTTL := defaultDashboardStatsFreshTTL
 	cacheTTL := defaultDashboardStatsCacheTTL
 	refreshTimeout := defaultDashboardStatsRefreshTimeout
@@ -88,17 +96,22 @@ func NewDashboardService(usageRepo UsageLogRepository, aggRepo DashboardAggregat
 	if aggRepo == nil {
 		aggEnabled = false
 	}
+	var groupUsageProvider GroupUsageSummaryProvider
+	if len(providers) > 0 {
+		groupUsageProvider = providers[0]
+	}
 	return &DashboardService{
-		usageRepo:      usageRepo,
-		aggRepo:        aggRepo,
-		cache:          cache,
-		cacheFreshTTL:  freshTTL,
-		cacheTTL:       cacheTTL,
-		refreshTimeout: refreshTimeout,
-		aggEnabled:     aggEnabled,
-		aggInterval:    aggInterval,
-		aggLookback:    aggLookback,
-		aggUsageDays:   aggUsageDays,
+		usageRepo:          usageRepo,
+		groupUsageProvider: groupUsageProvider,
+		aggRepo:            aggRepo,
+		cache:              cache,
+		cacheFreshTTL:      freshTTL,
+		cacheTTL:           cacheTTL,
+		refreshTimeout:     refreshTimeout,
+		aggEnabled:         aggEnabled,
+		aggInterval:        aggInterval,
+		aggLookback:        aggLookback,
+		aggUsageDays:       aggUsageDays,
 	}
 }
 
@@ -179,9 +192,26 @@ func (s *DashboardService) GetGroupStatsWithFilters(ctx context.Context, startTi
 
 // GetGroupUsageSummary returns today's and cumulative cost for all groups.
 func (s *DashboardService) GetGroupUsageSummary(ctx context.Context, todayStart time.Time) ([]usagestats.GroupUsageSummary, error) {
+	source := "realtime"
+	if s.groupUsageProvider != nil && (s.settingService == nil || s.settingService.IsGroupUsageRollupEnabled(ctx)) {
+		results, err := s.groupUsageProvider.GetGroupUsageSummary(ctx, todayStart)
+		if err == nil && results != nil {
+			return results, nil
+		}
+		// Keep the controlled realtime fallback, but expose that the rollup
+		// provider failed instead of presenting degraded data as healthy.
+		if err != nil {
+			source = "degraded"
+		}
+	}
 	results, err := s.usageRepo.GetAllGroupUsageSummary(ctx, todayStart)
 	if err != nil {
 		return nil, fmt.Errorf("get group usage summary: %w", err)
+	}
+	for i := range results {
+		if results[i].GroupUsageSource == "" {
+			results[i].GroupUsageSource = source
+		}
 	}
 	return results, nil
 }
@@ -365,8 +395,8 @@ func (s *DashboardService) GetUserUsageTrend(ctx context.Context, startTime, end
 	return trend, nil
 }
 
-func (s *DashboardService) GetUserSpendingRanking(ctx context.Context, startTime, endTime time.Time, limit int) (*usagestats.UserSpendingRankingResponse, error) {
-	ranking, err := s.usageRepo.GetUserSpendingRanking(ctx, startTime, endTime, limit)
+func (s *DashboardService) GetUserSpendingRanking(ctx context.Context, startTime, endTime time.Time, limit int, userID ...int64) (*usagestats.UserSpendingRankingResponse, error) {
+	ranking, err := s.usageRepo.GetUserSpendingRanking(ctx, startTime, endTime, limit, userID...)
 	if err != nil {
 		return nil, fmt.Errorf("get user spending ranking: %w", err)
 	}

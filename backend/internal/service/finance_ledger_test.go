@@ -64,6 +64,26 @@ func TestFinanceUsageScannerBuildsMultiAttemptProjection(t *testing.T) {
 	require.Equal(t, int64(99), *projection.Segments[1].FXRateVersionID)
 }
 
+func TestFinanceUsageScannerPreservesXSearchUsageListValue(t *testing.T) {
+	now := time.Date(2026, 8, 29, 0, 0, 0, 0, time.UTC)
+	value := decimal.RequireFromString("0.0123456789")
+	mode := string(BillingModePerRequest)
+	log := &UsageLog{
+		ID: 200, UserID: 8, AccountID: 12, RequestID: "x-search-finance",
+		Model: "x_search", RequestedModel: "x_search", BillingMode: &mode,
+		ActualCost: value.InexactFloat64(), UsageListValue: &value, CreatedAt: now,
+	}
+	scanner := NewFinanceUsageScanner(
+		&financeLedgerStub{launchAt: now, acquired: true},
+		NewFinancePriceSelector(&financePriceLookupStub{}),
+		NewFinanceCostCalculator(),
+	)
+	projection, err := scanner.buildProjection(context.Background(), log, nil, now)
+	require.NoError(t, err)
+	require.NotNil(t, projection.UsageListValue)
+	require.Equal(t, "0.0123456789", projection.UsageListValue.StringFixed(10))
+}
+
 func int64PointerForFinanceTest(value int64) *int64        { return &value }
 func timePointerForFinanceTest(value time.Time) *time.Time { return &value }
 

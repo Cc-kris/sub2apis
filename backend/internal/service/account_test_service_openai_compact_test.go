@@ -2,6 +2,7 @@ package service
 
 import (
 	"bytes"
+	"context"
 	"io"
 	"net/http"
 	"net/http/httptest"
@@ -13,6 +14,27 @@ import (
 	"github.com/stretchr/testify/require"
 	"github.com/tidwall/gjson"
 )
+
+type compactTestSettingRepo struct {
+	values map[string]string
+}
+
+func (r *compactTestSettingRepo) Get(context.Context, string) (*Setting, error) {
+	return nil, ErrSettingNotFound
+}
+func (r *compactTestSettingRepo) GetValue(_ context.Context, key string) (string, error) {
+	if value, ok := r.values[key]; ok {
+		return value, nil
+	}
+	return "", ErrSettingNotFound
+}
+func (r *compactTestSettingRepo) Set(context.Context, string, string) error { return nil }
+func (r *compactTestSettingRepo) GetMultiple(context.Context, []string) (map[string]string, error) {
+	return nil, nil
+}
+func (r *compactTestSettingRepo) SetMultiple(context.Context, map[string]string) error { return nil }
+func (r *compactTestSettingRepo) GetAll(context.Context) (map[string]string, error)    { return nil, nil }
+func (r *compactTestSettingRepo) Delete(context.Context, string) error                 { return nil }
 
 func TestAccountTestService_TestAccountConnection_OpenAICompactOAuthSuccessPersistsSupport(t *testing.T) {
 	gin.SetMode(gin.TestMode)
@@ -52,7 +74,7 @@ func TestAccountTestService_TestAccountConnection_OpenAICompactOAuthSuccessPersi
 	err := svc.TestAccountConnection(c, account.ID, "gpt-5.4", "", AccountTestModeCompact)
 	require.NoError(t, err)
 
-	require.Equal(t, chatgptCodexAPIURL+"/compact", upstream.lastReq.URL.String())
+	require.Equal(t, chatgptCodexAPIURL, upstream.lastReq.URL.String())
 	require.Equal(t, "chatgpt.com", upstream.lastReq.Host)
 	require.Equal(t, "application/json", upstream.lastReq.Header.Get("Accept"))
 	require.Equal(t, codexCLIVersion, upstream.lastReq.Header.Get("Version"))
@@ -152,10 +174,43 @@ func TestAccountTestService_TestAccountConnection_OpenAICompactAPIKeyUsesCompact
 	err := svc.TestAccountConnection(c, account.ID, "gpt-5.4", "", AccountTestModeCompact)
 	require.NoError(t, err)
 
-	require.Equal(t, "https://example.com/v1/responses/compact", upstream.lastReq.URL.String())
+	require.Equal(t, "https://example.com/v1/responses", upstream.lastReq.URL.String())
 	require.Equal(t, "gpt-5.4-openai-compact", gjson.GetBytes(upstream.lastBody, "model").String())
 	updates := <-updateCalls
 	require.Equal(t, true, updates["openai_compact_supported"])
+}
+
+func TestAccountTestService_TestAccountConnection_OpenAICompactUsesLegacyPathWhenV2Disabled(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+
+	account := Account{
+		ID:          31,
+		Platform:    PlatformOpenAI,
+		Type:        AccountTypeAPIKey,
+		Concurrency: 1,
+		Credentials: map[string]any{
+			"api_key":  "sk-test",
+			"base_url": "https://example.com/v1",
+		},
+	}
+	repo := &snapshotUpdateAccountRepo{stubOpenAIAccountRepo: stubOpenAIAccountRepo{accounts: []Account{account}}}
+	upstream := &httpUpstreamRecorder{resp: &http.Response{
+		StatusCode: http.StatusOK,
+		Header:     http.Header{"Content-Type": []string{"application/json"}},
+		Body:       io.NopCloser(strings.NewReader(`{"id":"cmp_probe","status":"completed"}`)),
+	}}
+	settings := NewSettingService(&compactTestSettingRepo{values: map[string]string{SettingKeyOpenAIRemoteCompactionV2Enabled: "false"}}, &config.Config{})
+	svc := &AccountTestService{
+		accountRepo:    repo,
+		httpUpstream:   upstream,
+		cfg:            &config.Config{Security: config.SecurityConfig{URLAllowlist: config.URLAllowlistConfig{Enabled: false}}},
+		settingService: settings,
+	}
+
+	c, _ := gin.CreateTestContext(httptest.NewRecorder())
+	c.Request = httptest.NewRequest(http.MethodPost, "/api/v1/admin/accounts/31/test", nil)
+	require.NoError(t, svc.TestAccountConnection(c, account.ID, "gpt-5.4", "", AccountTestModeCompact))
+	require.Equal(t, "https://example.com/v1/responses/compact", upstream.lastReq.URL.String())
 }
 
 func TestAccountTestService_TestAccountConnection_OpenAICompactAPIKeyDefaultBaseURLUsesV1Path(t *testing.T) {
@@ -195,6 +250,6 @@ func TestAccountTestService_TestAccountConnection_OpenAICompactAPIKeyDefaultBase
 
 	err := svc.TestAccountConnection(c, account.ID, "gpt-5.4", "", AccountTestModeCompact)
 	require.NoError(t, err)
-	require.Equal(t, "https://api.openai.com/v1/responses/compact", upstream.lastReq.URL.String())
+	require.Equal(t, "https://api.openai.com/v1/responses", upstream.lastReq.URL.String())
 	<-updateCalls
 }

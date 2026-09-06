@@ -3,7 +3,7 @@ import { flushPromises, mount } from '@vue/test-utils'
 
 import UsageView from '../UsageView.vue'
 
-const { list, getStats, getSnapshotV2, getById } = vi.hoisted(() => {
+const { list, getStats, getModelStats, getSnapshotV2, getById } = vi.hoisted(() => {
   vi.stubGlobal('localStorage', {
     getItem: vi.fn(() => null),
     setItem: vi.fn(),
@@ -13,6 +13,7 @@ const { list, getStats, getSnapshotV2, getById } = vi.hoisted(() => {
   return {
     list: vi.fn(),
     getStats: vi.fn(),
+    getModelStats: vi.fn(),
     getSnapshotV2: vi.fn(),
     getById: vi.fn(),
   }
@@ -39,6 +40,7 @@ vi.mock('@/api/admin', () => ({
       getStats,
     },
     dashboard: {
+      getModelStats,
       getSnapshotV2,
     },
     users: {
@@ -110,6 +112,7 @@ describe('admin UsageView distribution metric toggles', () => {
     vi.useFakeTimers()
     list.mockReset()
     getStats.mockReset()
+    getModelStats.mockReset()
     getSnapshotV2.mockReset()
     getById.mockReset()
 
@@ -128,6 +131,7 @@ describe('admin UsageView distribution metric toggles', () => {
       total_actual_cost: 0,
       average_duration_ms: 0,
     })
+    getModelStats.mockResolvedValue([])
     getSnapshotV2.mockResolvedValue({
       trend: [],
       models: [],
@@ -161,9 +165,12 @@ describe('admin UsageView distribution metric toggles', () => {
       },
     })
 
+    expect(wrapper.find('[data-test="usage-content-ready"]').exists()).toBe(false)
+    await flushPromises()
     vi.advanceTimersByTime(120)
     await flushPromises()
 
+    expect(wrapper.find('[data-test="usage-content-ready"]').exists()).toBe(true)
     expect(getSnapshotV2).toHaveBeenCalledTimes(1)
     const now = new Date()
     const yesterday = new Date(now.getTime() - 24 * 60 * 60 * 1000)

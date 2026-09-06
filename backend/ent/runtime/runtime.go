@@ -657,14 +657,34 @@ func init() {
 			return nil
 		}
 	}()
+	// channelmonitorDescMode is the schema descriptor for mode field.
+	channelmonitorDescMode := channelmonitorFields[2].Descriptor()
+	// channelmonitor.DefaultMode holds the default value on creation for the mode field.
+	channelmonitor.DefaultMode = channelmonitorDescMode.Default.(string)
+	// channelmonitor.ModeValidator is a validator for the "mode" field. It is called by the builders before save.
+	channelmonitor.ModeValidator = func() func(string) error {
+		validators := channelmonitorDescMode.Validators
+		fns := [...]func(string) error{
+			validators[0].(func(string) error),
+			validators[1].(func(string) error),
+		}
+		return func(mode string) error {
+			for _, fn := range fns {
+				if err := fn(mode); err != nil {
+					return err
+				}
+			}
+			return nil
+		}
+	}()
 	// channelmonitorDescAPIMode is the schema descriptor for api_mode field.
-	channelmonitorDescAPIMode := channelmonitorFields[2].Descriptor()
+	channelmonitorDescAPIMode := channelmonitorFields[3].Descriptor()
 	// channelmonitor.DefaultAPIMode holds the default value on creation for the api_mode field.
 	channelmonitor.DefaultAPIMode = channelmonitorDescAPIMode.Default.(string)
 	// channelmonitor.APIModeValidator is a validator for the "api_mode" field. It is called by the builders before save.
 	channelmonitor.APIModeValidator = channelmonitorDescAPIMode.Validators[0].(func(string) error)
 	// channelmonitorDescEndpoint is the schema descriptor for endpoint field.
-	channelmonitorDescEndpoint := channelmonitorFields[3].Descriptor()
+	channelmonitorDescEndpoint := channelmonitorFields[4].Descriptor()
 	// channelmonitor.EndpointValidator is a validator for the "endpoint" field. It is called by the builders before save.
 	channelmonitor.EndpointValidator = func() func(string) error {
 		validators := channelmonitorDescEndpoint.Validators
@@ -682,11 +702,11 @@ func init() {
 		}
 	}()
 	// channelmonitorDescAPIKeyEncrypted is the schema descriptor for api_key_encrypted field.
-	channelmonitorDescAPIKeyEncrypted := channelmonitorFields[4].Descriptor()
+	channelmonitorDescAPIKeyEncrypted := channelmonitorFields[5].Descriptor()
 	// channelmonitor.APIKeyEncryptedValidator is a validator for the "api_key_encrypted" field. It is called by the builders before save.
 	channelmonitor.APIKeyEncryptedValidator = channelmonitorDescAPIKeyEncrypted.Validators[0].(func(string) error)
 	// channelmonitorDescPrimaryModel is the schema descriptor for primary_model field.
-	channelmonitorDescPrimaryModel := channelmonitorFields[5].Descriptor()
+	channelmonitorDescPrimaryModel := channelmonitorFields[6].Descriptor()
 	// channelmonitor.PrimaryModelValidator is a validator for the "primary_model" field. It is called by the builders before save.
 	channelmonitor.PrimaryModelValidator = func() func(string) error {
 		validators := channelmonitorDescPrimaryModel.Validators
@@ -704,29 +724,29 @@ func init() {
 		}
 	}()
 	// channelmonitorDescExtraModels is the schema descriptor for extra_models field.
-	channelmonitorDescExtraModels := channelmonitorFields[6].Descriptor()
+	channelmonitorDescExtraModels := channelmonitorFields[7].Descriptor()
 	// channelmonitor.DefaultExtraModels holds the default value on creation for the extra_models field.
 	channelmonitor.DefaultExtraModels = channelmonitorDescExtraModels.Default.([]string)
 	// channelmonitorDescGroupName is the schema descriptor for group_name field.
-	channelmonitorDescGroupName := channelmonitorFields[7].Descriptor()
+	channelmonitorDescGroupName := channelmonitorFields[8].Descriptor()
 	// channelmonitor.DefaultGroupName holds the default value on creation for the group_name field.
 	channelmonitor.DefaultGroupName = channelmonitorDescGroupName.Default.(string)
 	// channelmonitor.GroupNameValidator is a validator for the "group_name" field. It is called by the builders before save.
 	channelmonitor.GroupNameValidator = channelmonitorDescGroupName.Validators[0].(func(string) error)
 	// channelmonitorDescEnabled is the schema descriptor for enabled field.
-	channelmonitorDescEnabled := channelmonitorFields[8].Descriptor()
+	channelmonitorDescEnabled := channelmonitorFields[9].Descriptor()
 	// channelmonitor.DefaultEnabled holds the default value on creation for the enabled field.
 	channelmonitor.DefaultEnabled = channelmonitorDescEnabled.Default.(bool)
 	// channelmonitorDescIntervalSeconds is the schema descriptor for interval_seconds field.
-	channelmonitorDescIntervalSeconds := channelmonitorFields[9].Descriptor()
+	channelmonitorDescIntervalSeconds := channelmonitorFields[10].Descriptor()
 	// channelmonitor.IntervalSecondsValidator is a validator for the "interval_seconds" field. It is called by the builders before save.
 	channelmonitor.IntervalSecondsValidator = channelmonitorDescIntervalSeconds.Validators[0].(func(int) error)
 	// channelmonitorDescExtraHeaders is the schema descriptor for extra_headers field.
-	channelmonitorDescExtraHeaders := channelmonitorFields[13].Descriptor()
+	channelmonitorDescExtraHeaders := channelmonitorFields[15].Descriptor()
 	// channelmonitor.DefaultExtraHeaders holds the default value on creation for the extra_headers field.
 	channelmonitor.DefaultExtraHeaders = channelmonitorDescExtraHeaders.Default.(map[string]string)
 	// channelmonitorDescBodyOverrideMode is the schema descriptor for body_override_mode field.
-	channelmonitorDescBodyOverrideMode := channelmonitorFields[14].Descriptor()
+	channelmonitorDescBodyOverrideMode := channelmonitorFields[16].Descriptor()
 	// channelmonitor.DefaultBodyOverrideMode holds the default value on creation for the body_override_mode field.
 	channelmonitor.DefaultBodyOverrideMode = channelmonitorDescBodyOverrideMode.Default.(string)
 	// channelmonitor.BodyOverrideModeValidator is a validator for the "body_override_mode" field. It is called by the builders before save.
@@ -1262,6 +1282,14 @@ func init() {
 	groupDescRpmLimit := groupFields[35].Descriptor()
 	// group.DefaultRpmLimit holds the default value on creation for the rpm_limit field.
 	group.DefaultRpmLimit = groupDescRpmLimit.Default.(int)
+	// groupDescLongContextPricingEnabled is the schema descriptor for long_context_pricing_enabled field.
+	groupDescLongContextPricingEnabled := groupFields[36].Descriptor()
+	// group.DefaultLongContextPricingEnabled holds the default value on creation for the long_context_pricing_enabled field.
+	group.DefaultLongContextPricingEnabled = groupDescLongContextPricingEnabled.Default.(bool)
+	// groupDescModelPricing is the schema descriptor for model_pricing field.
+	groupDescModelPricing := groupFields[37].Descriptor()
+	// group.DefaultModelPricing holds the default value on creation for the model_pricing field.
+	group.DefaultModelPricing = groupDescModelPricing.Default.(map[string]interface{})
 	idempotencyrecordMixin := schema.IdempotencyRecord{}.Mixin()
 	idempotencyrecordMixinFields0 := idempotencyrecordMixin[0].Fields()
 	_ = idempotencyrecordMixinFields0
@@ -2797,62 +2825,68 @@ func init() {
 	usageupstreamattempt.DefaultCacheReadTokens = usageupstreamattemptDescCacheReadTokens.Default.(int64)
 	// usageupstreamattempt.CacheReadTokensValidator is a validator for the "cache_read_tokens" field. It is called by the builders before save.
 	usageupstreamattempt.CacheReadTokensValidator = usageupstreamattemptDescCacheReadTokens.Validators[0].(func(int64) error)
+	// usageupstreamattemptDescCacheCreationTokens is the schema descriptor for cache_creation_tokens field.
+	usageupstreamattemptDescCacheCreationTokens := usageupstreamattemptFields[10].Descriptor()
+	// usageupstreamattempt.DefaultCacheCreationTokens holds the default value on creation for the cache_creation_tokens field.
+	usageupstreamattempt.DefaultCacheCreationTokens = usageupstreamattemptDescCacheCreationTokens.Default.(int64)
+	// usageupstreamattempt.CacheCreationTokensValidator is a validator for the "cache_creation_tokens" field. It is called by the builders before save.
+	usageupstreamattempt.CacheCreationTokensValidator = usageupstreamattemptDescCacheCreationTokens.Validators[0].(func(int64) error)
 	// usageupstreamattemptDescCacheCreation5mTokens is the schema descriptor for cache_creation_5m_tokens field.
-	usageupstreamattemptDescCacheCreation5mTokens := usageupstreamattemptFields[10].Descriptor()
+	usageupstreamattemptDescCacheCreation5mTokens := usageupstreamattemptFields[11].Descriptor()
 	// usageupstreamattempt.DefaultCacheCreation5mTokens holds the default value on creation for the cache_creation_5m_tokens field.
 	usageupstreamattempt.DefaultCacheCreation5mTokens = usageupstreamattemptDescCacheCreation5mTokens.Default.(int64)
 	// usageupstreamattempt.CacheCreation5mTokensValidator is a validator for the "cache_creation_5m_tokens" field. It is called by the builders before save.
 	usageupstreamattempt.CacheCreation5mTokensValidator = usageupstreamattemptDescCacheCreation5mTokens.Validators[0].(func(int64) error)
 	// usageupstreamattemptDescCacheCreation1hTokens is the schema descriptor for cache_creation_1h_tokens field.
-	usageupstreamattemptDescCacheCreation1hTokens := usageupstreamattemptFields[11].Descriptor()
+	usageupstreamattemptDescCacheCreation1hTokens := usageupstreamattemptFields[12].Descriptor()
 	// usageupstreamattempt.DefaultCacheCreation1hTokens holds the default value on creation for the cache_creation_1h_tokens field.
 	usageupstreamattempt.DefaultCacheCreation1hTokens = usageupstreamattemptDescCacheCreation1hTokens.Default.(int64)
 	// usageupstreamattempt.CacheCreation1hTokensValidator is a validator for the "cache_creation_1h_tokens" field. It is called by the builders before save.
 	usageupstreamattempt.CacheCreation1hTokensValidator = usageupstreamattemptDescCacheCreation1hTokens.Validators[0].(func(int64) error)
 	// usageupstreamattemptDescRequestCount is the schema descriptor for request_count field.
-	usageupstreamattemptDescRequestCount := usageupstreamattemptFields[12].Descriptor()
+	usageupstreamattemptDescRequestCount := usageupstreamattemptFields[13].Descriptor()
 	// usageupstreamattempt.DefaultRequestCount holds the default value on creation for the request_count field.
 	usageupstreamattempt.DefaultRequestCount = usageupstreamattemptDescRequestCount.Default.(int64)
 	// usageupstreamattempt.RequestCountValidator is a validator for the "request_count" field. It is called by the builders before save.
 	usageupstreamattempt.RequestCountValidator = usageupstreamattemptDescRequestCount.Validators[0].(func(int64) error)
 	// usageupstreamattemptDescImageCount is the schema descriptor for image_count field.
-	usageupstreamattemptDescImageCount := usageupstreamattemptFields[13].Descriptor()
+	usageupstreamattemptDescImageCount := usageupstreamattemptFields[14].Descriptor()
 	// usageupstreamattempt.DefaultImageCount holds the default value on creation for the image_count field.
 	usageupstreamattempt.DefaultImageCount = usageupstreamattemptDescImageCount.Default.(int64)
 	// usageupstreamattempt.ImageCountValidator is a validator for the "image_count" field. It is called by the builders before save.
 	usageupstreamattempt.ImageCountValidator = usageupstreamattemptDescImageCount.Validators[0].(func(int64) error)
 	// usageupstreamattemptDescVideoSeconds is the schema descriptor for video_seconds field.
-	usageupstreamattemptDescVideoSeconds := usageupstreamattemptFields[14].Descriptor()
+	usageupstreamattemptDescVideoSeconds := usageupstreamattemptFields[15].Descriptor()
 	// usageupstreamattempt.DefaultVideoSeconds holds the default value on creation for the video_seconds field.
 	usageupstreamattempt.DefaultVideoSeconds = usageupstreamattemptDescVideoSeconds.Default.(int64)
 	// usageupstreamattempt.VideoSecondsValidator is a validator for the "video_seconds" field. It is called by the builders before save.
 	usageupstreamattempt.VideoSecondsValidator = usageupstreamattemptDescVideoSeconds.Validators[0].(func(int64) error)
 	// usageupstreamattemptDescUpstreamMultiplierSource is the schema descriptor for upstream_multiplier_source field.
-	usageupstreamattemptDescUpstreamMultiplierSource := usageupstreamattemptFields[17].Descriptor()
+	usageupstreamattemptDescUpstreamMultiplierSource := usageupstreamattemptFields[18].Descriptor()
 	// usageupstreamattempt.UpstreamMultiplierSourceValidator is a validator for the "upstream_multiplier_source" field. It is called by the builders before save.
 	usageupstreamattempt.UpstreamMultiplierSourceValidator = usageupstreamattemptDescUpstreamMultiplierSource.Validators[0].(func(string) error)
 	// usageupstreamattemptDescBillable is the schema descriptor for billable field.
-	usageupstreamattemptDescBillable := usageupstreamattemptFields[20].Descriptor()
+	usageupstreamattemptDescBillable := usageupstreamattemptFields[21].Descriptor()
 	// usageupstreamattempt.DefaultBillable holds the default value on creation for the billable field.
 	usageupstreamattempt.DefaultBillable = usageupstreamattemptDescBillable.Default.(bool)
 	// usageupstreamattemptDescUpstreamChargeCurrency is the schema descriptor for upstream_charge_currency field.
-	usageupstreamattemptDescUpstreamChargeCurrency := usageupstreamattemptFields[25].Descriptor()
+	usageupstreamattemptDescUpstreamChargeCurrency := usageupstreamattemptFields[26].Descriptor()
 	// usageupstreamattempt.UpstreamChargeCurrencyValidator is a validator for the "upstream_charge_currency" field. It is called by the builders before save.
 	usageupstreamattempt.UpstreamChargeCurrencyValidator = usageupstreamattemptDescUpstreamChargeCurrency.Validators[0].(func(string) error)
 	// usageupstreamattemptDescUpstreamChargeUnitSemantics is the schema descriptor for upstream_charge_unit_semantics field.
-	usageupstreamattemptDescUpstreamChargeUnitSemantics := usageupstreamattemptFields[26].Descriptor()
+	usageupstreamattemptDescUpstreamChargeUnitSemantics := usageupstreamattemptFields[27].Descriptor()
 	// usageupstreamattempt.UpstreamChargeUnitSemanticsValidator is a validator for the "upstream_charge_unit_semantics" field. It is called by the builders before save.
 	usageupstreamattempt.UpstreamChargeUnitSemanticsValidator = usageupstreamattemptDescUpstreamChargeUnitSemantics.Validators[0].(func(string) error)
 	// usageupstreamattemptDescUpstreamBillingRequestID is the schema descriptor for upstream_billing_request_id field.
-	usageupstreamattemptDescUpstreamBillingRequestID := usageupstreamattemptFields[27].Descriptor()
+	usageupstreamattemptDescUpstreamBillingRequestID := usageupstreamattemptFields[28].Descriptor()
 	// usageupstreamattempt.UpstreamBillingRequestIDValidator is a validator for the "upstream_billing_request_id" field. It is called by the builders before save.
 	usageupstreamattempt.UpstreamBillingRequestIDValidator = usageupstreamattemptDescUpstreamBillingRequestID.Validators[0].(func(string) error)
 	// usageupstreamattemptDescCompletedAt is the schema descriptor for completed_at field.
-	usageupstreamattemptDescCompletedAt := usageupstreamattemptFields[29].Descriptor()
+	usageupstreamattemptDescCompletedAt := usageupstreamattemptFields[30].Descriptor()
 	// usageupstreamattempt.DefaultCompletedAt holds the default value on creation for the completed_at field.
 	usageupstreamattempt.DefaultCompletedAt = usageupstreamattemptDescCompletedAt.Default.(func() time.Time)
 	// usageupstreamattemptDescCreatedAt is the schema descriptor for created_at field.
-	usageupstreamattemptDescCreatedAt := usageupstreamattemptFields[30].Descriptor()
+	usageupstreamattemptDescCreatedAt := usageupstreamattemptFields[31].Descriptor()
 	// usageupstreamattempt.DefaultCreatedAt holds the default value on creation for the created_at field.
 	usageupstreamattempt.DefaultCreatedAt = usageupstreamattemptDescCreatedAt.Default.(func() time.Time)
 	userMixin := schema.User{}.Mixin()

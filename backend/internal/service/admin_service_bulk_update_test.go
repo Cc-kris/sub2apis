@@ -48,6 +48,37 @@ type accountRepoStubForBulkUpdate struct {
 	}
 }
 
+type atomicAccountRepoStubForBulkUpdate struct {
+	*accountRepoStubForBulkUpdate
+	updatedIDs []int64
+	err        error
+}
+
+func (s *atomicAccountRepoStubForBulkUpdate) BulkUpdateWithGroupsValidated(_ context.Context, ids []int64, _ AccountBulkUpdate, _ []int64, _ []AccountBulkUpdateTarget, _ bool) ([]int64, error) {
+	if s.err != nil {
+		return nil, s.err
+	}
+	if len(s.updatedIDs) == 0 {
+		return append([]int64(nil), ids...), nil
+	}
+	return append([]int64(nil), s.updatedIDs...), nil
+}
+
+func TestAdminService_BulkUpdateAccounts_AtomicTargetConflictPropagates422(t *testing.T) {
+	repo := &atomicAccountRepoStubForBulkUpdate{
+		accountRepoStubForBulkUpdate: &accountRepoStubForBulkUpdate{},
+		err:                          ErrBulkUpdateTargetInvalid,
+	}
+	svc := &adminServiceImpl{accountRepo: repo}
+	priority := 8
+	result, err := svc.BulkUpdateAccounts(context.Background(), &BulkUpdateAccountsInput{
+		AccountIDs: []int64{1, 2},
+		Priority:   &priority,
+	})
+	require.Nil(t, result)
+	require.ErrorIs(t, err, ErrBulkUpdateTargetInvalid)
+}
+
 func (s *accountRepoStubForBulkUpdate) Update(_ context.Context, _ *Account) error {
 	s.updateCalls++
 	return nil
@@ -86,6 +117,20 @@ func (s *accountRepoStubForBulkUpdate) BulkUpdate(_ context.Context, ids []int64
 		return 0, s.bulkUpdateErr
 	}
 	return int64(len(ids)), nil
+}
+
+func (s *accountRepoStubForBulkUpdate) BulkUpdateWithGroupsValidated(_ context.Context, ids []int64, update AccountBulkUpdate, _ []int64, _ []AccountBulkUpdateTarget, _ bool) ([]int64, error) {
+	s.bulkUpdateIDs = append([]int64{}, ids...)
+	s.lastBulkUpdate = update
+	if s.bulkUpdateErr != nil {
+		return nil, s.bulkUpdateErr
+	}
+	for _, accountID := range ids {
+		if err := s.bindGroupErrByID[accountID]; err != nil {
+			return nil, err
+		}
+	}
+	return append([]int64(nil), ids...), nil
 }
 
 func (s *accountRepoStubForBulkUpdate) BindGroups(_ context.Context, accountID int64, _ []int64) error {
@@ -238,8 +283,9 @@ func TestAdminService_BulkUpdateAccounts_DropsDeprecatedUpstreamWarningExtra(t *
 	require.NotContains(t, repo.lastBulkUpdate.Extra, "upstream_notify_enabled")
 }
 
-// TestAdminService_BulkUpdateAccounts_PartialFailureIDs 验证部分失败时 success_ids/failed_ids 正确。
-func TestAdminService_BulkUpdateAccounts_PartialFailureIDs(t *testing.T) {
+// TestAdminService_BulkUpdateAccounts_BindingFailureIsAtomic verifies that a
+// failed binding aborts the entire request instead of returning partial IDs.
+func TestAdminService_BulkUpdateAccounts_BindingFailureIsAtomic(t *testing.T) {
 	repo := &accountRepoStubForBulkUpdate{
 		bindGroupErrByID: map[int64]error{
 			2: errors.New("bind failed"),
@@ -260,12 +306,34 @@ func TestAdminService_BulkUpdateAccounts_PartialFailureIDs(t *testing.T) {
 	}
 
 	result, err := svc.BulkUpdateAccounts(context.Background(), input)
+	require.Nil(t, result)
+	require.EqualError(t, err, "bind failed")
+}
+
+func TestAdminService_BulkUpdateAccounts_AtomicPathReturnsAllTargetsInRequestOrder(t *testing.T) {
+	base := &accountRepoStubForBulkUpdate{}
+	repo := &atomicAccountRepoStubForBulkUpdate{accountRepoStubForBulkUpdate: base}
+	svc := &adminServiceImpl{
+		accountRepo: repo,
+		groupRepo:   &groupRepoStubForAdmin{getByID: &Group{ID: 10, Name: "g10"}},
+	}
+	groupIDs := []int64{10}
+	priority := 8
+	result, err := svc.BulkUpdateAccounts(context.Background(), &BulkUpdateAccountsInput{
+		AccountIDs:            []int64{9, 7, 8},
+		Priority:              &priority,
+		GroupIDs:              &groupIDs,
+		SkipMixedChannelCheck: true,
+	})
+
 	require.NoError(t, err)
-	require.Equal(t, 2, result.Success)
-	require.Equal(t, 1, result.Failed)
-	require.ElementsMatch(t, []int64{1, 3}, result.SuccessIDs)
-	require.ElementsMatch(t, []int64{2}, result.FailedIDs)
-	require.Len(t, result.Results, 3)
+	require.Equal(t, 3, result.Success)
+	require.Equal(t, 0, result.Failed)
+	require.Equal(t, []int64{9, 7, 8}, result.SuccessIDs)
+	require.Empty(t, result.FailedIDs)
+	require.Equal(t, []string{"success", "success", "success"}, []string{
+		result.Results[0].Status, result.Results[1].Status, result.Results[2].Status,
+	})
 }
 
 func TestAdminService_BulkUpdateAccounts_NilGroupRepoReturnsError(t *testing.T) {
@@ -287,7 +355,7 @@ func TestAdminService_BulkUpdateAccounts_NilGroupRepoReturnsError(t *testing.T) 
 // TestAdminService_BulkUpdateAccounts_MixedChannelPreCheckBlocksOnExistingConflict verifies
 // that the global pre-check detects a conflict with existing group members and returns an
 // error before any DB write is performed.
-func TestAdminService_BulkUpdateAccounts_MixedChannelPreCheckBlocksOnExistingConflict(t *testing.T) {
+func TestAdminService_BulkUpdateAccounts_DelegatesMixedChannelCheckToAtomicRepository(t *testing.T) {
 	repo := &accountRepoStubForBulkUpdate{
 		getByIDsAccounts: []*Account{
 			{ID: 1, Platform: PlatformAntigravity},
@@ -309,10 +377,10 @@ func TestAdminService_BulkUpdateAccounts_MixedChannelPreCheckBlocksOnExistingCon
 	}
 
 	result, err := svc.BulkUpdateAccounts(context.Background(), input)
-	require.Nil(t, result)
-	require.Error(t, err)
-	require.Contains(t, err.Error(), "mixed channel")
-	// No BindGroups should have been called since the check runs before any write.
+	require.NoError(t, err)
+	require.Equal(t, []int64{1}, result.SuccessIDs)
+	// The concrete repository validates the post-lock group state; the service
+	// must not revive an unsafe preflight write path.
 	require.Empty(t, repo.bindGroupsCalls)
 }
 

@@ -142,6 +142,30 @@ type schedulerTestGatewayCache struct {
 	deletedSessions map[string]int
 }
 
+// schedulerClaimRaceCache simulates another request winning the Redis SET NX
+// between this scheduler's initial sticky lookup and its first binding claim.
+type schedulerClaimRaceCache struct {
+	schedulerTestGatewayCache
+	firstLookup    bool
+	winningAccount int64
+}
+
+func (c *schedulerClaimRaceCache) GetSessionAccountID(ctx context.Context, groupID int64, sessionHash string) (int64, error) {
+	if !c.firstLookup {
+		c.firstLookup = true
+		return 0, errors.New("not found")
+	}
+	return c.schedulerTestGatewayCache.GetSessionAccountID(ctx, groupID, sessionHash)
+}
+
+func (c *schedulerClaimRaceCache) ClaimSessionAccountID(_ context.Context, _ int64, sessionHash string, _ int64, _ time.Duration) (int64, bool, error) {
+	if c.sessionBindings == nil {
+		c.sessionBindings = make(map[string]int64)
+	}
+	c.sessionBindings[sessionHash] = c.winningAccount
+	return c.winningAccount, false, nil
+}
+
 func (c *schedulerTestGatewayCache) GetSessionAccountID(ctx context.Context, groupID int64, sessionHash string) (int64, error) {
 	if id, ok := c.sessionBindings[sessionHash]; ok {
 		return id, nil
@@ -699,6 +723,36 @@ func TestOpenAIGatewayService_SelectAccountWithScheduler_SessionSticky(t *testin
 	require.Equal(t, account.ID, selection.Account.ID)
 	require.Equal(t, openAIAccountScheduleLayerSessionSticky, decision.Layer)
 	require.True(t, decision.StickySessionHit)
+	if selection.ReleaseFunc != nil {
+		selection.ReleaseFunc()
+	}
+}
+
+func TestOpenAIGatewayService_SelectAccountWithScheduler_FirstBindingRaceUsesWinner(t *testing.T) {
+	ctx := context.Background()
+	groupID := int64(10010)
+	accounts := []Account{
+		{ID: 52001, Platform: PlatformOpenAI, Type: AccountTypeAPIKey, Status: StatusActive, Schedulable: true, Concurrency: 1, Priority: 0},
+		{ID: 52002, Platform: PlatformOpenAI, Type: AccountTypeAPIKey, Status: StatusActive, Schedulable: true, Concurrency: 1, Priority: 10},
+	}
+	cache := &schedulerClaimRaceCache{winningAccount: 52002}
+	cfg := &config.Config{}
+	cfg.Gateway.Scheduling.LoadBatchEnabled = false
+	svc := &OpenAIGatewayService{
+		accountRepo:        schedulerTestOpenAIAccountRepo{accounts: accounts},
+		cache:              cache,
+		cfg:                cfg,
+		rateLimitService:   newOpenAIAdvancedSchedulerRateLimitService("true"),
+		concurrencyService: NewConcurrencyService(schedulerTestConcurrencyCache{}),
+	}
+
+	selection, decision, err := svc.SelectAccountWithScheduler(ctx, &groupID, "", "concurrent-first-bind", "gpt-5.6-sol", nil, OpenAIUpstreamTransportAny, false)
+	require.NoError(t, err)
+	require.NotNil(t, selection)
+	require.NotNil(t, selection.Account)
+	require.Equal(t, int64(52002), selection.Account.ID, "a losing concurrent selector must use the already-bound account")
+	require.Equal(t, openAIAccountScheduleLayerLoadBalance, decision.Layer)
+	require.Equal(t, int64(52002), cache.sessionBindings["openai:concurrent-first-bind"])
 	if selection.ReleaseFunc != nil {
 		selection.ReleaseFunc()
 	}

@@ -274,6 +274,7 @@ export interface UserTrendResponse {
 export interface UserSpendingRankingParams
   extends Pick<TrendParams, 'start_date' | 'end_date'> {
   limit?: number
+  user_id?: number
 }
 
 /**

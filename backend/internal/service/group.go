@@ -1,6 +1,8 @@
 package service
 
 import (
+	"fmt"
+	"strconv"
 	"strings"
 	"time"
 
@@ -69,7 +71,9 @@ type Group struct {
 
 	// RPMLimit 分组级每分钟请求数上限（0 = 不限制）。
 	// 一旦设置即接管该分组用户的限流（覆盖用户级 rpm_limit），可被 user-group rpm_override 进一步覆盖。
-	RPMLimit int
+	RPMLimit                  int
+	LongContextPricingEnabled bool
+	ModelPricing              map[string]GroupModelPricing
 
 	CreatedAt time.Time
 	UpdatedAt time.Time
@@ -78,6 +82,65 @@ type Group struct {
 	AccountCount            int64
 	ActiveAccountCount      int64
 	RateLimitedAccountCount int64
+}
+
+type GroupModelPricing struct {
+	Input     string                 `json:"input,omitempty"`
+	Output    string                 `json:"output,omitempty"`
+	CacheRead string                 `json:"cache_read,omitempty"`
+	Intervals []GroupPricingInterval `json:"intervals,omitempty"`
+}
+type GroupPricingInterval struct {
+	MinTokens int    `json:"min_tokens"`
+	MaxTokens *int   `json:"max_tokens,omitempty"`
+	Input     string `json:"input,omitempty"`
+	Output    string `json:"output,omitempty"`
+	CacheRead string `json:"cache_read,omitempty"`
+}
+
+// ValidateModelPricing keeps group-specific JSON pricing safe before it is
+// persisted. The interval convention is the existing (min,max] convention.
+func ValidateModelPricing(pricing map[string]GroupModelPricing) error {
+	for model, rule := range pricing {
+		if strings.TrimSpace(model) == "" {
+			return fmt.Errorf("model pricing model name is required")
+		}
+		for _, value := range []string{rule.Input, rule.Output, rule.CacheRead} {
+			if value == "" {
+				continue
+			}
+			price, err := strconv.ParseFloat(value, 64)
+			if err != nil || price < 0 {
+				return fmt.Errorf("model pricing for %s contains an invalid price", model)
+			}
+		}
+		intervals := make([]PricingInterval, 0, len(rule.Intervals))
+		for _, interval := range rule.Intervals {
+			item := PricingInterval{MinTokens: interval.MinTokens, MaxTokens: interval.MaxTokens}
+			for _, field := range []struct {
+				value string
+				dest  **float64
+			}{
+				{interval.Input, &item.InputPrice},
+				{interval.Output, &item.OutputPrice},
+				{interval.CacheRead, &item.CacheReadPrice},
+			} {
+				if field.value == "" {
+					continue
+				}
+				value, err := strconv.ParseFloat(field.value, 64)
+				if err != nil || value < 0 {
+					return fmt.Errorf("model pricing interval for %s contains an invalid price", model)
+				}
+				*field.dest = &value
+			}
+			intervals = append(intervals, item)
+		}
+		if err := ValidateIntervals(intervals, BillingModeToken); err != nil {
+			return fmt.Errorf("model pricing intervals for %s: %w", model, err)
+		}
+	}
+	return nil
 }
 
 func (g *Group) IsActive() bool {

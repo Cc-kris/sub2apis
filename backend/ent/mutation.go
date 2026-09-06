@@ -15281,6 +15281,7 @@ type ChannelMonitorMutation struct {
 	updated_at              *time.Time
 	name                    *string
 	provider                *channelmonitor.Provider
+	mode                    *string
 	api_mode                *string
 	endpoint                *string
 	api_key_encrypted       *string
@@ -15294,6 +15295,8 @@ type ChannelMonitorMutation struct {
 	last_checked_at         *time.Time
 	created_by              *int64
 	addcreated_by           *int64
+	account_id              *int64
+	addaccount_id           *int64
 	extra_headers           *map[string]string
 	body_override_mode      *string
 	body_override           *map[string]interface{}
@@ -15551,6 +15554,42 @@ func (m *ChannelMonitorMutation) OldProvider(ctx context.Context) (v channelmoni
 // ResetProvider resets all changes to the "provider" field.
 func (m *ChannelMonitorMutation) ResetProvider() {
 	m.provider = nil
+}
+
+// SetMode sets the "mode" field.
+func (m *ChannelMonitorMutation) SetMode(s string) {
+	m.mode = &s
+}
+
+// Mode returns the value of the "mode" field in the mutation.
+func (m *ChannelMonitorMutation) Mode() (r string, exists bool) {
+	v := m.mode
+	if v == nil {
+		return
+	}
+	return *v, true
+}
+
+// OldMode returns the old "mode" field's value of the ChannelMonitor entity.
+// If the ChannelMonitor object wasn't provided to the builder, the object is fetched from the database.
+// An error is returned if the mutation operation is not UpdateOne, or the database query fails.
+func (m *ChannelMonitorMutation) OldMode(ctx context.Context) (v string, err error) {
+	if !m.op.Is(OpUpdateOne) {
+		return v, errors.New("OldMode is only allowed on UpdateOne operations")
+	}
+	if m.id == nil || m.oldValue == nil {
+		return v, errors.New("OldMode requires an ID field in the mutation")
+	}
+	oldValue, err := m.oldValue(ctx)
+	if err != nil {
+		return v, fmt.Errorf("querying old value for OldMode: %w", err)
+	}
+	return oldValue.Mode, nil
+}
+
+// ResetMode resets all changes to the "mode" field.
+func (m *ChannelMonitorMutation) ResetMode() {
+	m.mode = nil
 }
 
 // SetAPIMode sets the "api_mode" field.
@@ -15994,6 +16033,76 @@ func (m *ChannelMonitorMutation) ResetCreatedBy() {
 	m.addcreated_by = nil
 }
 
+// SetAccountID sets the "account_id" field.
+func (m *ChannelMonitorMutation) SetAccountID(i int64) {
+	m.account_id = &i
+	m.addaccount_id = nil
+}
+
+// AccountID returns the value of the "account_id" field in the mutation.
+func (m *ChannelMonitorMutation) AccountID() (r int64, exists bool) {
+	v := m.account_id
+	if v == nil {
+		return
+	}
+	return *v, true
+}
+
+// OldAccountID returns the old "account_id" field's value of the ChannelMonitor entity.
+// If the ChannelMonitor object wasn't provided to the builder, the object is fetched from the database.
+// An error is returned if the mutation operation is not UpdateOne, or the database query fails.
+func (m *ChannelMonitorMutation) OldAccountID(ctx context.Context) (v *int64, err error) {
+	if !m.op.Is(OpUpdateOne) {
+		return v, errors.New("OldAccountID is only allowed on UpdateOne operations")
+	}
+	if m.id == nil || m.oldValue == nil {
+		return v, errors.New("OldAccountID requires an ID field in the mutation")
+	}
+	oldValue, err := m.oldValue(ctx)
+	if err != nil {
+		return v, fmt.Errorf("querying old value for OldAccountID: %w", err)
+	}
+	return oldValue.AccountID, nil
+}
+
+// AddAccountID adds i to the "account_id" field.
+func (m *ChannelMonitorMutation) AddAccountID(i int64) {
+	if m.addaccount_id != nil {
+		*m.addaccount_id += i
+	} else {
+		m.addaccount_id = &i
+	}
+}
+
+// AddedAccountID returns the value that was added to the "account_id" field in this mutation.
+func (m *ChannelMonitorMutation) AddedAccountID() (r int64, exists bool) {
+	v := m.addaccount_id
+	if v == nil {
+		return
+	}
+	return *v, true
+}
+
+// ClearAccountID clears the value of the "account_id" field.
+func (m *ChannelMonitorMutation) ClearAccountID() {
+	m.account_id = nil
+	m.addaccount_id = nil
+	m.clearedFields[channelmonitor.FieldAccountID] = struct{}{}
+}
+
+// AccountIDCleared returns if the "account_id" field was cleared in this mutation.
+func (m *ChannelMonitorMutation) AccountIDCleared() bool {
+	_, ok := m.clearedFields[channelmonitor.FieldAccountID]
+	return ok
+}
+
+// ResetAccountID resets all changes to the "account_id" field.
+func (m *ChannelMonitorMutation) ResetAccountID() {
+	m.account_id = nil
+	m.addaccount_id = nil
+	delete(m.clearedFields, channelmonitor.FieldAccountID)
+}
+
 // SetTemplateID sets the "template_id" field.
 func (m *ChannelMonitorMutation) SetTemplateID(i int64) {
 	m.request_template = &i
@@ -16346,7 +16455,7 @@ func (m *ChannelMonitorMutation) Type() string {
 // order to get all numeric fields that were incremented/decremented, call
 // AddedFields().
 func (m *ChannelMonitorMutation) Fields() []string {
-	fields := make([]string, 0, 18)
+	fields := make([]string, 0, 20)
 	if m.created_at != nil {
 		fields = append(fields, channelmonitor.FieldCreatedAt)
 	}
@@ -16358,6 +16467,9 @@ func (m *ChannelMonitorMutation) Fields() []string {
 	}
 	if m.provider != nil {
 		fields = append(fields, channelmonitor.FieldProvider)
+	}
+	if m.mode != nil {
+		fields = append(fields, channelmonitor.FieldMode)
 	}
 	if m.api_mode != nil {
 		fields = append(fields, channelmonitor.FieldAPIMode)
@@ -16389,6 +16501,9 @@ func (m *ChannelMonitorMutation) Fields() []string {
 	if m.created_by != nil {
 		fields = append(fields, channelmonitor.FieldCreatedBy)
 	}
+	if m.account_id != nil {
+		fields = append(fields, channelmonitor.FieldAccountID)
+	}
 	if m.request_template != nil {
 		fields = append(fields, channelmonitor.FieldTemplateID)
 	}
@@ -16417,6 +16532,8 @@ func (m *ChannelMonitorMutation) Field(name string) (ent.Value, bool) {
 		return m.Name()
 	case channelmonitor.FieldProvider:
 		return m.Provider()
+	case channelmonitor.FieldMode:
+		return m.Mode()
 	case channelmonitor.FieldAPIMode:
 		return m.APIMode()
 	case channelmonitor.FieldEndpoint:
@@ -16437,6 +16554,8 @@ func (m *ChannelMonitorMutation) Field(name string) (ent.Value, bool) {
 		return m.LastCheckedAt()
 	case channelmonitor.FieldCreatedBy:
 		return m.CreatedBy()
+	case channelmonitor.FieldAccountID:
+		return m.AccountID()
 	case channelmonitor.FieldTemplateID:
 		return m.TemplateID()
 	case channelmonitor.FieldExtraHeaders:
@@ -16462,6 +16581,8 @@ func (m *ChannelMonitorMutation) OldField(ctx context.Context, name string) (ent
 		return m.OldName(ctx)
 	case channelmonitor.FieldProvider:
 		return m.OldProvider(ctx)
+	case channelmonitor.FieldMode:
+		return m.OldMode(ctx)
 	case channelmonitor.FieldAPIMode:
 		return m.OldAPIMode(ctx)
 	case channelmonitor.FieldEndpoint:
@@ -16482,6 +16603,8 @@ func (m *ChannelMonitorMutation) OldField(ctx context.Context, name string) (ent
 		return m.OldLastCheckedAt(ctx)
 	case channelmonitor.FieldCreatedBy:
 		return m.OldCreatedBy(ctx)
+	case channelmonitor.FieldAccountID:
+		return m.OldAccountID(ctx)
 	case channelmonitor.FieldTemplateID:
 		return m.OldTemplateID(ctx)
 	case channelmonitor.FieldExtraHeaders:
@@ -16526,6 +16649,13 @@ func (m *ChannelMonitorMutation) SetField(name string, value ent.Value) error {
 			return fmt.Errorf("unexpected type %T for field %s", value, name)
 		}
 		m.SetProvider(v)
+		return nil
+	case channelmonitor.FieldMode:
+		v, ok := value.(string)
+		if !ok {
+			return fmt.Errorf("unexpected type %T for field %s", value, name)
+		}
+		m.SetMode(v)
 		return nil
 	case channelmonitor.FieldAPIMode:
 		v, ok := value.(string)
@@ -16597,6 +16727,13 @@ func (m *ChannelMonitorMutation) SetField(name string, value ent.Value) error {
 		}
 		m.SetCreatedBy(v)
 		return nil
+	case channelmonitor.FieldAccountID:
+		v, ok := value.(int64)
+		if !ok {
+			return fmt.Errorf("unexpected type %T for field %s", value, name)
+		}
+		m.SetAccountID(v)
+		return nil
 	case channelmonitor.FieldTemplateID:
 		v, ok := value.(int64)
 		if !ok {
@@ -16639,6 +16776,9 @@ func (m *ChannelMonitorMutation) AddedFields() []string {
 	if m.addcreated_by != nil {
 		fields = append(fields, channelmonitor.FieldCreatedBy)
 	}
+	if m.addaccount_id != nil {
+		fields = append(fields, channelmonitor.FieldAccountID)
+	}
 	return fields
 }
 
@@ -16651,6 +16791,8 @@ func (m *ChannelMonitorMutation) AddedField(name string) (ent.Value, bool) {
 		return m.AddedIntervalSeconds()
 	case channelmonitor.FieldCreatedBy:
 		return m.AddedCreatedBy()
+	case channelmonitor.FieldAccountID:
+		return m.AddedAccountID()
 	}
 	return nil, false
 }
@@ -16674,6 +16816,13 @@ func (m *ChannelMonitorMutation) AddField(name string, value ent.Value) error {
 		}
 		m.AddCreatedBy(v)
 		return nil
+	case channelmonitor.FieldAccountID:
+		v, ok := value.(int64)
+		if !ok {
+			return fmt.Errorf("unexpected type %T for field %s", value, name)
+		}
+		m.AddAccountID(v)
+		return nil
 	}
 	return fmt.Errorf("unknown ChannelMonitor numeric field %s", name)
 }
@@ -16687,6 +16836,9 @@ func (m *ChannelMonitorMutation) ClearedFields() []string {
 	}
 	if m.FieldCleared(channelmonitor.FieldLastCheckedAt) {
 		fields = append(fields, channelmonitor.FieldLastCheckedAt)
+	}
+	if m.FieldCleared(channelmonitor.FieldAccountID) {
+		fields = append(fields, channelmonitor.FieldAccountID)
 	}
 	if m.FieldCleared(channelmonitor.FieldTemplateID) {
 		fields = append(fields, channelmonitor.FieldTemplateID)
@@ -16714,6 +16866,9 @@ func (m *ChannelMonitorMutation) ClearField(name string) error {
 	case channelmonitor.FieldLastCheckedAt:
 		m.ClearLastCheckedAt()
 		return nil
+	case channelmonitor.FieldAccountID:
+		m.ClearAccountID()
+		return nil
 	case channelmonitor.FieldTemplateID:
 		m.ClearTemplateID()
 		return nil
@@ -16739,6 +16894,9 @@ func (m *ChannelMonitorMutation) ResetField(name string) error {
 		return nil
 	case channelmonitor.FieldProvider:
 		m.ResetProvider()
+		return nil
+	case channelmonitor.FieldMode:
+		m.ResetMode()
 		return nil
 	case channelmonitor.FieldAPIMode:
 		m.ResetAPIMode()
@@ -16769,6 +16927,9 @@ func (m *ChannelMonitorMutation) ResetField(name string) error {
 		return nil
 	case channelmonitor.FieldCreatedBy:
 		m.ResetCreatedBy()
+		return nil
+	case channelmonitor.FieldAccountID:
+		m.ResetAccountID()
 		return nil
 	case channelmonitor.FieldTemplateID:
 		m.ResetTemplateID()
@@ -28877,6 +29038,8 @@ type GroupMutation struct {
 	messages_dispatch_model_config          *domain.OpenAIMessagesDispatchModelConfig
 	rpm_limit                               *int
 	addrpm_limit                            *int
+	long_context_pricing_enabled            *bool
+	model_pricing                           *map[string]interface{}
 	clearedFields                           map[string]struct{}
 	api_keys                                map[int64]struct{}
 	removedapi_keys                         map[int64]struct{}
@@ -30951,6 +31114,78 @@ func (m *GroupMutation) ResetRpmLimit() {
 	m.addrpm_limit = nil
 }
 
+// SetLongContextPricingEnabled sets the "long_context_pricing_enabled" field.
+func (m *GroupMutation) SetLongContextPricingEnabled(b bool) {
+	m.long_context_pricing_enabled = &b
+}
+
+// LongContextPricingEnabled returns the value of the "long_context_pricing_enabled" field in the mutation.
+func (m *GroupMutation) LongContextPricingEnabled() (r bool, exists bool) {
+	v := m.long_context_pricing_enabled
+	if v == nil {
+		return
+	}
+	return *v, true
+}
+
+// OldLongContextPricingEnabled returns the old "long_context_pricing_enabled" field's value of the Group entity.
+// If the Group object wasn't provided to the builder, the object is fetched from the database.
+// An error is returned if the mutation operation is not UpdateOne, or the database query fails.
+func (m *GroupMutation) OldLongContextPricingEnabled(ctx context.Context) (v bool, err error) {
+	if !m.op.Is(OpUpdateOne) {
+		return v, errors.New("OldLongContextPricingEnabled is only allowed on UpdateOne operations")
+	}
+	if m.id == nil || m.oldValue == nil {
+		return v, errors.New("OldLongContextPricingEnabled requires an ID field in the mutation")
+	}
+	oldValue, err := m.oldValue(ctx)
+	if err != nil {
+		return v, fmt.Errorf("querying old value for OldLongContextPricingEnabled: %w", err)
+	}
+	return oldValue.LongContextPricingEnabled, nil
+}
+
+// ResetLongContextPricingEnabled resets all changes to the "long_context_pricing_enabled" field.
+func (m *GroupMutation) ResetLongContextPricingEnabled() {
+	m.long_context_pricing_enabled = nil
+}
+
+// SetModelPricing sets the "model_pricing" field.
+func (m *GroupMutation) SetModelPricing(value map[string]interface{}) {
+	m.model_pricing = &value
+}
+
+// ModelPricing returns the value of the "model_pricing" field in the mutation.
+func (m *GroupMutation) ModelPricing() (r map[string]interface{}, exists bool) {
+	v := m.model_pricing
+	if v == nil {
+		return
+	}
+	return *v, true
+}
+
+// OldModelPricing returns the old "model_pricing" field's value of the Group entity.
+// If the Group object wasn't provided to the builder, the object is fetched from the database.
+// An error is returned if the mutation operation is not UpdateOne, or the database query fails.
+func (m *GroupMutation) OldModelPricing(ctx context.Context) (v map[string]interface{}, err error) {
+	if !m.op.Is(OpUpdateOne) {
+		return v, errors.New("OldModelPricing is only allowed on UpdateOne operations")
+	}
+	if m.id == nil || m.oldValue == nil {
+		return v, errors.New("OldModelPricing requires an ID field in the mutation")
+	}
+	oldValue, err := m.oldValue(ctx)
+	if err != nil {
+		return v, fmt.Errorf("querying old value for OldModelPricing: %w", err)
+	}
+	return oldValue.ModelPricing, nil
+}
+
+// ResetModelPricing resets all changes to the "model_pricing" field.
+func (m *GroupMutation) ResetModelPricing() {
+	m.model_pricing = nil
+}
+
 // AddAPIKeyIDs adds the "api_keys" edge to the APIKey entity by ids.
 func (m *GroupMutation) AddAPIKeyIDs(ids ...int64) {
 	if m.api_keys == nil {
@@ -31309,7 +31544,7 @@ func (m *GroupMutation) Type() string {
 // order to get all numeric fields that were incremented/decremented, call
 // AddedFields().
 func (m *GroupMutation) Fields() []string {
-	fields := make([]string, 0, 39)
+	fields := make([]string, 0, 41)
 	if m.created_at != nil {
 		fields = append(fields, group.FieldCreatedAt)
 	}
@@ -31427,6 +31662,12 @@ func (m *GroupMutation) Fields() []string {
 	if m.rpm_limit != nil {
 		fields = append(fields, group.FieldRpmLimit)
 	}
+	if m.long_context_pricing_enabled != nil {
+		fields = append(fields, group.FieldLongContextPricingEnabled)
+	}
+	if m.model_pricing != nil {
+		fields = append(fields, group.FieldModelPricing)
+	}
 	return fields
 }
 
@@ -31513,6 +31754,10 @@ func (m *GroupMutation) Field(name string) (ent.Value, bool) {
 		return m.MessagesDispatchModelConfig()
 	case group.FieldRpmLimit:
 		return m.RpmLimit()
+	case group.FieldLongContextPricingEnabled:
+		return m.LongContextPricingEnabled()
+	case group.FieldModelPricing:
+		return m.ModelPricing()
 	}
 	return nil, false
 }
@@ -31600,6 +31845,10 @@ func (m *GroupMutation) OldField(ctx context.Context, name string) (ent.Value, e
 		return m.OldMessagesDispatchModelConfig(ctx)
 	case group.FieldRpmLimit:
 		return m.OldRpmLimit(ctx)
+	case group.FieldLongContextPricingEnabled:
+		return m.OldLongContextPricingEnabled(ctx)
+	case group.FieldModelPricing:
+		return m.OldModelPricing(ctx)
 	}
 	return nil, fmt.Errorf("unknown Group field %s", name)
 }
@@ -31881,6 +32130,20 @@ func (m *GroupMutation) SetField(name string, value ent.Value) error {
 			return fmt.Errorf("unexpected type %T for field %s", value, name)
 		}
 		m.SetRpmLimit(v)
+		return nil
+	case group.FieldLongContextPricingEnabled:
+		v, ok := value.(bool)
+		if !ok {
+			return fmt.Errorf("unexpected type %T for field %s", value, name)
+		}
+		m.SetLongContextPricingEnabled(v)
+		return nil
+	case group.FieldModelPricing:
+		v, ok := value.(map[string]interface{})
+		if !ok {
+			return fmt.Errorf("unexpected type %T for field %s", value, name)
+		}
+		m.SetModelPricing(v)
 		return nil
 	}
 	return fmt.Errorf("unknown Group field %s", name)
@@ -32341,6 +32604,12 @@ func (m *GroupMutation) ResetField(name string) error {
 		return nil
 	case group.FieldRpmLimit:
 		m.ResetRpmLimit()
+		return nil
+	case group.FieldLongContextPricingEnabled:
+		m.ResetLongContextPricingEnabled()
+		return nil
+	case group.FieldModelPricing:
+		m.ResetModelPricing()
 		return nil
 	}
 	return fmt.Errorf("unknown Group field %s", name)
@@ -79518,6 +79787,8 @@ type UsageUpstreamAttemptMutation struct {
 	addoutput_tokens                 *int64
 	cache_read_tokens                *int64
 	addcache_read_tokens             *int64
+	cache_creation_tokens            *int64
+	addcache_creation_tokens         *int64
 	cache_creation_5m_tokens         *int64
 	addcache_creation_5m_tokens      *int64
 	cache_creation_1h_tokens         *int64
@@ -80179,6 +80450,62 @@ func (m *UsageUpstreamAttemptMutation) AddedCacheReadTokens() (r int64, exists b
 func (m *UsageUpstreamAttemptMutation) ResetCacheReadTokens() {
 	m.cache_read_tokens = nil
 	m.addcache_read_tokens = nil
+}
+
+// SetCacheCreationTokens sets the "cache_creation_tokens" field.
+func (m *UsageUpstreamAttemptMutation) SetCacheCreationTokens(i int64) {
+	m.cache_creation_tokens = &i
+	m.addcache_creation_tokens = nil
+}
+
+// CacheCreationTokens returns the value of the "cache_creation_tokens" field in the mutation.
+func (m *UsageUpstreamAttemptMutation) CacheCreationTokens() (r int64, exists bool) {
+	v := m.cache_creation_tokens
+	if v == nil {
+		return
+	}
+	return *v, true
+}
+
+// OldCacheCreationTokens returns the old "cache_creation_tokens" field's value of the UsageUpstreamAttempt entity.
+// If the UsageUpstreamAttempt object wasn't provided to the builder, the object is fetched from the database.
+// An error is returned if the mutation operation is not UpdateOne, or the database query fails.
+func (m *UsageUpstreamAttemptMutation) OldCacheCreationTokens(ctx context.Context) (v int64, err error) {
+	if !m.op.Is(OpUpdateOne) {
+		return v, errors.New("OldCacheCreationTokens is only allowed on UpdateOne operations")
+	}
+	if m.id == nil || m.oldValue == nil {
+		return v, errors.New("OldCacheCreationTokens requires an ID field in the mutation")
+	}
+	oldValue, err := m.oldValue(ctx)
+	if err != nil {
+		return v, fmt.Errorf("querying old value for OldCacheCreationTokens: %w", err)
+	}
+	return oldValue.CacheCreationTokens, nil
+}
+
+// AddCacheCreationTokens adds i to the "cache_creation_tokens" field.
+func (m *UsageUpstreamAttemptMutation) AddCacheCreationTokens(i int64) {
+	if m.addcache_creation_tokens != nil {
+		*m.addcache_creation_tokens += i
+	} else {
+		m.addcache_creation_tokens = &i
+	}
+}
+
+// AddedCacheCreationTokens returns the value that was added to the "cache_creation_tokens" field in this mutation.
+func (m *UsageUpstreamAttemptMutation) AddedCacheCreationTokens() (r int64, exists bool) {
+	v := m.addcache_creation_tokens
+	if v == nil {
+		return
+	}
+	return *v, true
+}
+
+// ResetCacheCreationTokens resets all changes to the "cache_creation_tokens" field.
+func (m *UsageUpstreamAttemptMutation) ResetCacheCreationTokens() {
+	m.cache_creation_tokens = nil
+	m.addcache_creation_tokens = nil
 }
 
 // SetCacheCreation5mTokens sets the "cache_creation_5m_tokens" field.
@@ -81366,7 +81693,7 @@ func (m *UsageUpstreamAttemptMutation) Type() string {
 // order to get all numeric fields that were incremented/decremented, call
 // AddedFields().
 func (m *UsageUpstreamAttemptMutation) Fields() []string {
-	fields := make([]string, 0, 31)
+	fields := make([]string, 0, 32)
 	if m.usage_log_id != nil {
 		fields = append(fields, usageupstreamattempt.FieldUsageLogID)
 	}
@@ -81396,6 +81723,9 @@ func (m *UsageUpstreamAttemptMutation) Fields() []string {
 	}
 	if m.cache_read_tokens != nil {
 		fields = append(fields, usageupstreamattempt.FieldCacheReadTokens)
+	}
+	if m.cache_creation_tokens != nil {
+		fields = append(fields, usageupstreamattempt.FieldCacheCreationTokens)
 	}
 	if m.cache_creation_5m_tokens != nil {
 		fields = append(fields, usageupstreamattempt.FieldCacheCreation5mTokens)
@@ -81488,6 +81818,8 @@ func (m *UsageUpstreamAttemptMutation) Field(name string) (ent.Value, bool) {
 		return m.OutputTokens()
 	case usageupstreamattempt.FieldCacheReadTokens:
 		return m.CacheReadTokens()
+	case usageupstreamattempt.FieldCacheCreationTokens:
+		return m.CacheCreationTokens()
 	case usageupstreamattempt.FieldCacheCreation5mTokens:
 		return m.CacheCreation5mTokens()
 	case usageupstreamattempt.FieldCacheCreation1hTokens:
@@ -81559,6 +81891,8 @@ func (m *UsageUpstreamAttemptMutation) OldField(ctx context.Context, name string
 		return m.OldOutputTokens(ctx)
 	case usageupstreamattempt.FieldCacheReadTokens:
 		return m.OldCacheReadTokens(ctx)
+	case usageupstreamattempt.FieldCacheCreationTokens:
+		return m.OldCacheCreationTokens(ctx)
 	case usageupstreamattempt.FieldCacheCreation5mTokens:
 		return m.OldCacheCreation5mTokens(ctx)
 	case usageupstreamattempt.FieldCacheCreation1hTokens:
@@ -81679,6 +82013,13 @@ func (m *UsageUpstreamAttemptMutation) SetField(name string, value ent.Value) er
 			return fmt.Errorf("unexpected type %T for field %s", value, name)
 		}
 		m.SetCacheReadTokens(v)
+		return nil
+	case usageupstreamattempt.FieldCacheCreationTokens:
+		v, ok := value.(int64)
+		if !ok {
+			return fmt.Errorf("unexpected type %T for field %s", value, name)
+		}
+		m.SetCacheCreationTokens(v)
 		return nil
 	case usageupstreamattempt.FieldCacheCreation5mTokens:
 		v, ok := value.(int64)
@@ -81856,6 +82197,9 @@ func (m *UsageUpstreamAttemptMutation) AddedFields() []string {
 	if m.addcache_read_tokens != nil {
 		fields = append(fields, usageupstreamattempt.FieldCacheReadTokens)
 	}
+	if m.addcache_creation_tokens != nil {
+		fields = append(fields, usageupstreamattempt.FieldCacheCreationTokens)
+	}
 	if m.addcache_creation_5m_tokens != nil {
 		fields = append(fields, usageupstreamattempt.FieldCacheCreation5mTokens)
 	}
@@ -81911,6 +82255,8 @@ func (m *UsageUpstreamAttemptMutation) AddedField(name string) (ent.Value, bool)
 		return m.AddedOutputTokens()
 	case usageupstreamattempt.FieldCacheReadTokens:
 		return m.AddedCacheReadTokens()
+	case usageupstreamattempt.FieldCacheCreationTokens:
+		return m.AddedCacheCreationTokens()
 	case usageupstreamattempt.FieldCacheCreation5mTokens:
 		return m.AddedCacheCreation5mTokens()
 	case usageupstreamattempt.FieldCacheCreation1hTokens:
@@ -81990,6 +82336,13 @@ func (m *UsageUpstreamAttemptMutation) AddField(name string, value ent.Value) er
 			return fmt.Errorf("unexpected type %T for field %s", value, name)
 		}
 		m.AddCacheReadTokens(v)
+		return nil
+	case usageupstreamattempt.FieldCacheCreationTokens:
+		v, ok := value.(int64)
+		if !ok {
+			return fmt.Errorf("unexpected type %T for field %s", value, name)
+		}
+		m.AddCacheCreationTokens(v)
 		return nil
 	case usageupstreamattempt.FieldCacheCreation5mTokens:
 		v, ok := value.(int64)
@@ -82217,6 +82570,9 @@ func (m *UsageUpstreamAttemptMutation) ResetField(name string) error {
 		return nil
 	case usageupstreamattempt.FieldCacheReadTokens:
 		m.ResetCacheReadTokens()
+		return nil
+	case usageupstreamattempt.FieldCacheCreationTokens:
+		m.ResetCacheCreationTokens()
 		return nil
 	case usageupstreamattempt.FieldCacheCreation5mTokens:
 		m.ResetCacheCreation5mTokens()

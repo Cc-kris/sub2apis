@@ -1164,7 +1164,7 @@ func (s *TokenRefreshService) postRefreshActions(ctx context.Context, account *A
 		}
 	}
 	// 刷新成功后清除临时不可调度状态（处理 OAuth 401 恢复场景）
-	if account.TempUnschedulableUntil != nil && time.Now().Before(*account.TempUnschedulableUntil) {
+	if account.TempUnschedulableUntil != nil && account.TempUnschedulableReason != "team_workspace_deactivated" && time.Now().Before(*account.TempUnschedulableUntil) {
 		if clearErr := s.accountRepo.ClearTempUnschedulable(ctx, account.ID); clearErr != nil {
 			slog.Warn("token_refresh.clear_temp_unschedulable_failed",
 				"account_id", account.ID,

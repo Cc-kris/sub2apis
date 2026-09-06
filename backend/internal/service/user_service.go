@@ -102,6 +102,7 @@ type UserRepository interface {
 	BatchSetConcurrency(ctx context.Context, userIDs []int64, value int) (int, error)
 	BatchAddConcurrency(ctx context.Context, userIDs []int64, delta int) (int, error)
 	ExistsByEmail(ctx context.Context, email string) (bool, error)
+	CountByEmailDomain(ctx context.Context, domain string) (int, error)
 	RemoveGroupFromAllowedGroups(ctx context.Context, groupID int64) (int64, error)
 	// AddGroupToAllowedGroups 将指定分组增量添加到用户的 allowed_groups（幂等，冲突忽略）
 	AddGroupToAllowedGroups(ctx context.Context, userID int64, groupID int64) error
@@ -114,6 +115,10 @@ type UserRepository interface {
 	UpdateTotpSecret(ctx context.Context, userID int64, encryptedSecret *string) error
 	EnableTotp(ctx context.Context, userID int64) error
 	DisableTotp(ctx context.Context, userID int64) error
+}
+
+type RegistrationDomainLimitedUserCreator interface {
+	CreateWithRegistrationDomainLimit(ctx context.Context, user *User, limit int) error
 }
 
 type UserAuthIdentityRecord struct {

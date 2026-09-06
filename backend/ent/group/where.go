@@ -235,6 +235,11 @@ func RpmLimit(v int) predicate.Group {
 	return predicate.Group(sql.FieldEQ(FieldRpmLimit, v))
 }
 
+// LongContextPricingEnabled applies equality check predicate on the "long_context_pricing_enabled" field. It's identical to LongContextPricingEnabledEQ.
+func LongContextPricingEnabled(v bool) predicate.Group {
+	return predicate.Group(sql.FieldEQ(FieldLongContextPricingEnabled, v))
+}
+
 // CreatedAtEQ applies the EQ predicate on the "created_at" field.
 func CreatedAtEQ(v time.Time) predicate.Group {
 	return predicate.Group(sql.FieldEQ(FieldCreatedAt, v))
@@ -1663,6 +1668,16 @@ func RpmLimitLT(v int) predicate.Group {
 // RpmLimitLTE applies the LTE predicate on the "rpm_limit" field.
 func RpmLimitLTE(v int) predicate.Group {
 	return predicate.Group(sql.FieldLTE(FieldRpmLimit, v))
+}
+
+// LongContextPricingEnabledEQ applies the EQ predicate on the "long_context_pricing_enabled" field.
+func LongContextPricingEnabledEQ(v bool) predicate.Group {
+	return predicate.Group(sql.FieldEQ(FieldLongContextPricingEnabled, v))
+}
+
+// LongContextPricingEnabledNEQ applies the NEQ predicate on the "long_context_pricing_enabled" field.
+func LongContextPricingEnabledNEQ(v bool) predicate.Group {
+	return predicate.Group(sql.FieldNEQ(FieldLongContextPricingEnabled, v))
 }
 
 // HasAPIKeys applies the HasEdge predicate on the "api_keys" edge.

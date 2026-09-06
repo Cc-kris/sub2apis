@@ -61,11 +61,27 @@ var quotaHeaderAllowlist = []string{
 	"x-ratelimit-limit-tokens",
 	"x-ratelimit-remaining-tokens",
 	"x-ratelimit-reset-tokens",
+	"x-rate-limit-limit-requests",
+	"x-rate-limit-remaining-requests",
+	"x-rate-limit-reset-requests",
+	"x-rate-limit-limit-tokens",
+	"x-rate-limit-remaining-tokens",
+	"x-rate-limit-reset-tokens",
 	"retry-after",
 	"x-subscription-tier",
 	"xai-subscription-tier",
+	"x-xai-subscription-tier",
+	"x-xai-user-tier",
+	"xai-user-tier",
+	"xai-tier",
+	"x-user-tier",
+	"x-plan-tier",
+	"x-subscription-plan",
 	"x-entitlement-status",
 	"xai-entitlement-status",
+	"x-xai-entitlement-status",
+	"x-xai-user-entitlement-status",
+	"x-user-entitlement-status",
 }
 
 func ParseQuotaHeaders(headers http.Header, statusCode int) *QuotaSnapshot {
@@ -95,8 +111,13 @@ func parseQuotaHeaders(headers http.Header, statusCode int, source string, keepE
 	if retryAfter := parseRetryAfter(headers.Get("retry-after")); retryAfter != nil {
 		snapshot.RetryAfterSeconds = retryAfter
 	}
-	snapshot.SubscriptionTier = firstHeader(headers, "xai-subscription-tier", "x-subscription-tier")
-	snapshot.EntitlementStatus = firstHeader(headers, "xai-entitlement-status", "x-entitlement-status")
+	snapshot.SubscriptionTier = firstHeader(headers,
+		"xai-subscription-tier", "x-subscription-tier", "x-xai-subscription-tier",
+		"x-xai-user-tier", "xai-user-tier", "xai-tier", "x-user-tier",
+		"x-plan-tier", "x-subscription-plan")
+	snapshot.EntitlementStatus = firstHeader(headers,
+		"xai-entitlement-status", "x-entitlement-status", "x-xai-entitlement-status",
+		"x-xai-user-entitlement-status", "x-user-entitlement-status")
 
 	for _, name := range quotaHeaderAllowlist {
 		if value := strings.TrimSpace(headers.Get(name)); value != "" {
@@ -121,11 +142,14 @@ func parseQuotaHeaders(headers http.Header, statusCode int, source string, keepE
 }
 
 func parseQuotaWindow(headers http.Header, dimension string) *QuotaWindow {
+	limitHeader := firstHeader(headers, "x-ratelimit-limit-"+dimension, "x-rate-limit-limit-"+dimension)
+	remainingHeader := firstHeader(headers, "x-ratelimit-remaining-"+dimension, "x-rate-limit-remaining-"+dimension)
+	resetHeader := firstHeader(headers, "x-ratelimit-reset-"+dimension, "x-rate-limit-reset-"+dimension)
 	window := &QuotaWindow{
-		Limit:     parseInt64Ptr(headers.Get("x-ratelimit-limit-" + dimension)),
-		Remaining: parseInt64Ptr(headers.Get("x-ratelimit-remaining-" + dimension)),
+		Limit:     parseInt64Ptr(limitHeader),
+		Remaining: parseInt64Ptr(remainingHeader),
 	}
-	if reset := parseResetHeader(headers.Get("x-ratelimit-reset-" + dimension)); reset != nil {
+	if reset := parseResetHeader(resetHeader); reset != nil {
 		window.ResetUnix = reset
 		window.ResetAt = time.Unix(*reset, 0).UTC().Format(time.RFC3339)
 	}
@@ -141,9 +165,19 @@ func parseResetHeader(raw string) *int64 {
 		return nil
 	}
 	if value, err := strconv.ParseInt(raw, 10, 64); err == nil {
-		if value > 1_000_000_000_000 {
-			value = value / 1000
+		switch {
+		case value >= 1_000_000_000_000:
+			value /= 1000 // millisecond Unix epoch
+		case value >= 1_000_000_000:
+			// Unix seconds epoch.
+		default:
+			// xAI also emits a relative number of seconds until reset.
+			value = time.Now().Unix() + value
 		}
+		return &value
+	}
+	if duration, err := time.ParseDuration(raw); err == nil && duration > 0 {
+		value := time.Now().Add(duration).Unix()
 		return &value
 	}
 	if t, err := time.Parse(time.RFC3339, raw); err == nil {

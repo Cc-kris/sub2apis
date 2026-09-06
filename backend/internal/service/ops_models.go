@@ -107,6 +107,7 @@ type OpsErrorLogFilter struct {
 	Model     string
 	GroupID   *int64
 	AccountID *int64
+	UserID    *int64
 
 	StatusCodes      []int
 	StatusCodesOther bool

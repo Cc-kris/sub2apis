@@ -32,6 +32,8 @@ type SystemSettings struct {
 	RegistrationEnabled              bool                     `json:"registration_enabled"`
 	EmailVerifyEnabled               bool                     `json:"email_verify_enabled"`
 	RegistrationEmailSuffixWhitelist []string                 `json:"registration_email_suffix_whitelist"`
+	RegistrationDomainLimitEnabled   bool                     `json:"registration_domain_limit_enabled"`
+	RegistrationDomainLimitPerDomain int                      `json:"registration_domain_limit_per_domain"`
 	PromoCodeEnabled                 bool                     `json:"promo_code_enabled"`
 	PasswordResetEnabled             bool                     `json:"password_reset_enabled"`
 	FrontendURL                      string                   `json:"frontend_url"`
@@ -249,11 +251,15 @@ type SystemSettings struct {
 	ChannelMonitorDefaultIntervalSeconds int  `json:"channel_monitor_default_interval_seconds"`
 
 	// Available Channels feature switch (user-facing aggregate view)
-	AvailableChannelsEnabled    bool                        `json:"available_channels_enabled"`
-	ModelSquareEnabled          bool                        `json:"model_square_enabled"`
-	SalesPricingVersion         service.SalesPricingVersion `json:"sales_pricing_version"`
-	SalesPricingShadowStartedAt *time.Time                  `json:"sales_pricing_shadow_started_at"`
-	SalesPricingV2EnabledAt     *time.Time                  `json:"sales_pricing_v2_enabled_at"`
+	AvailableChannelsEnabled        bool                        `json:"available_channels_enabled"`
+	ModelSquareEnabled              bool                        `json:"model_square_enabled"`
+	OpenAIRemoteCompactionV2Enabled bool                        `json:"openai_remote_compaction_v2_enabled"`
+	GroupUsageRollupEnabled         bool                        `json:"group_usage_rollup_enabled"`
+	SalesPricingResolverEnabled     bool                        `json:"sales_pricing_resolver_enabled"`
+	OpenAITeamLinkedResolverEnabled bool                        `json:"openai_team_linked_resolver_enabled"`
+	SalesPricingVersion             service.SalesPricingVersion `json:"sales_pricing_version"`
+	SalesPricingShadowStartedAt     *time.Time                  `json:"sales_pricing_shadow_started_at"`
+	SalesPricingV2EnabledAt         *time.Time                  `json:"sales_pricing_v2_enabled_at"`
 
 	// 风控中心功能开关
 	RiskControlEnabled bool `json:"risk_control_enabled"`
@@ -278,6 +284,8 @@ type PublicSettings struct {
 	EmailVerifyEnabled               bool                     `json:"email_verify_enabled"`
 	ForceEmailOnThirdPartySignup     bool                     `json:"force_email_on_third_party_signup"`
 	RegistrationEmailSuffixWhitelist []string                 `json:"registration_email_suffix_whitelist"`
+	RegistrationDomainLimitEnabled   bool                     `json:"registration_domain_limit_enabled"`
+	RegistrationDomainLimitPerDomain int                      `json:"registration_domain_limit_per_domain"`
 	PromoCodeEnabled                 bool                     `json:"promo_code_enabled"`
 	PasswordResetEnabled             bool                     `json:"password_reset_enabled"`
 	InvitationCodeEnabled            bool                     `json:"invitation_code_enabled"`

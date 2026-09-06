@@ -249,6 +249,19 @@ func (r *financePriceLookupRepository) ensureFXRateVersion(ctx context.Context, 
 	if !dbent.IsNotFound(err) {
 		return nil, err
 	}
+	// FX intervals are exclusive per currency, so an existing version at the
+	// same effective timestamp must be reused even when it was recorded by a
+	// different source (for example, finance_initialization).
+	existing, err = r.client.FinanceFXRateVersion.Query().Where(
+		financefxrateversion.CurrencyEQ(currency),
+		financefxrateversion.EffectiveFromEQ(effectiveFrom),
+	).Order(dbent.Desc(financefxrateversion.FieldID)).First(ctx)
+	if err == nil {
+		return &existing.ID, nil
+	}
+	if !dbent.IsNotFound(err) {
+		return nil, err
+	}
 	created, err := r.client.FinanceFXRateVersion.Create().
 		SetCurrency(currency).
 		SetRateToUsd(rate).

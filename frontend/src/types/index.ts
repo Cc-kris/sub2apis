@@ -503,7 +503,7 @@ export interface PaginationConfig {
 
 // ==================== API Key & Group Types ====================
 
-export type GroupPlatform = 'anthropic' | 'openai' | 'gemini' | 'antigravity' | 'grok' | 'seedace'
+export type GroupPlatform = 'anthropic' | 'openai' | 'gemini' | 'antigravity' | 'grok' | 'seedace' | 'ollama' | 'kimi' | 'zhipu' | 'deepseek'
 
 export type SubscriptionType = 'standard' | 'subscription'
 
@@ -574,7 +574,23 @@ export interface AdminGroup extends Group {
   messages_dispatch_model_config?: OpenAIMessagesDispatchModelConfig
 
   // 分组排序
-  sort_order: number
+	sort_order: number
+	long_context_pricing_enabled: boolean
+	model_pricing: Record<string, GroupModelPricing>
+}
+
+export interface GroupPricingInterval {
+	min_tokens: number
+	max_tokens?: number | null
+	input?: string
+	output?: string
+	cache_read?: string
+}
+export interface GroupModelPricing {
+	input?: string
+	output?: string
+	cache_read?: string
+	intervals?: GroupPricingInterval[]
 }
 
 export interface ApiKey {
@@ -664,7 +680,9 @@ export interface CreateGroupRequest {
   require_oauth_only?: boolean
   require_privacy_set?: boolean
   // 从指定分组复制账号
-  copy_accounts_from_group_ids?: number[]
+	copy_accounts_from_group_ids?: number[]
+	long_context_pricing_enabled?: boolean
+	model_pricing?: Record<string, GroupModelPricing>
 }
 
 export interface UpdateGroupRequest {
@@ -696,12 +714,14 @@ export interface UpdateGroupRequest {
   supported_model_scopes?: string[]
   require_oauth_only?: boolean
   require_privacy_set?: boolean
-  copy_accounts_from_group_ids?: number[]
+	copy_accounts_from_group_ids?: number[]
+	long_context_pricing_enabled?: boolean
+	model_pricing?: Record<string, GroupModelPricing>
 }
 
 // ==================== Account & Proxy Types ====================
 
-export type AccountPlatform = 'anthropic' | 'openai' | 'gemini' | 'antigravity' | 'grok' | 'seedace'
+export type AccountPlatform = 'anthropic' | 'openai' | 'gemini' | 'antigravity' | 'grok' | 'seedace' | 'ollama' | 'kimi' | 'zhipu' | 'deepseek'
 export type AccountType = 'oauth' | 'setup-token' | 'apikey' | 'upstream' | 'bedrock' | 'service_account'
 export type OAuthAddMethod = 'oauth' | 'setup-token'
 export type ProxyProtocol = 'http' | 'https' | 'socks5' | 'socks5h'
@@ -1358,6 +1378,8 @@ export interface UsageLogAccountSummary {
 }
 
 export interface AdminUsageLog extends UsageLog {
+	status_code?: number | null
+	error_message?: string | null
   upstream_model?: string | null
   model_mapping_chain?: string | null
 

@@ -230,6 +230,27 @@ func (_u *UsageUpstreamAttemptUpdate) AddCacheReadTokens(v int64) *UsageUpstream
 	return _u
 }
 
+// SetCacheCreationTokens sets the "cache_creation_tokens" field.
+func (_u *UsageUpstreamAttemptUpdate) SetCacheCreationTokens(v int64) *UsageUpstreamAttemptUpdate {
+	_u.mutation.ResetCacheCreationTokens()
+	_u.mutation.SetCacheCreationTokens(v)
+	return _u
+}
+
+// SetNillableCacheCreationTokens sets the "cache_creation_tokens" field if the given value is not nil.
+func (_u *UsageUpstreamAttemptUpdate) SetNillableCacheCreationTokens(v *int64) *UsageUpstreamAttemptUpdate {
+	if v != nil {
+		_u.SetCacheCreationTokens(*v)
+	}
+	return _u
+}
+
+// AddCacheCreationTokens adds value to the "cache_creation_tokens" field.
+func (_u *UsageUpstreamAttemptUpdate) AddCacheCreationTokens(v int64) *UsageUpstreamAttemptUpdate {
+	_u.mutation.AddCacheCreationTokens(v)
+	return _u
+}
+
 // SetCacheCreation5mTokens sets the "cache_creation_5m_tokens" field.
 func (_u *UsageUpstreamAttemptUpdate) SetCacheCreation5mTokens(v int64) *UsageUpstreamAttemptUpdate {
 	_u.mutation.ResetCacheCreation5mTokens()
@@ -726,6 +747,11 @@ func (_u *UsageUpstreamAttemptUpdate) check() error {
 			return &ValidationError{Name: "cache_read_tokens", err: fmt.Errorf(`ent: validator failed for field "UsageUpstreamAttempt.cache_read_tokens": %w`, err)}
 		}
 	}
+	if v, ok := _u.mutation.CacheCreationTokens(); ok {
+		if err := usageupstreamattempt.CacheCreationTokensValidator(v); err != nil {
+			return &ValidationError{Name: "cache_creation_tokens", err: fmt.Errorf(`ent: validator failed for field "UsageUpstreamAttempt.cache_creation_tokens": %w`, err)}
+		}
+	}
 	if v, ok := _u.mutation.CacheCreation5mTokens(); ok {
 		if err := usageupstreamattempt.CacheCreation5mTokensValidator(v); err != nil {
 			return &ValidationError{Name: "cache_creation_5m_tokens", err: fmt.Errorf(`ent: validator failed for field "UsageUpstreamAttempt.cache_creation_5m_tokens": %w`, err)}
@@ -842,6 +868,12 @@ func (_u *UsageUpstreamAttemptUpdate) sqlSave(ctx context.Context) (_node int, e
 	}
 	if value, ok := _u.mutation.AddedCacheReadTokens(); ok {
 		_spec.AddField(usageupstreamattempt.FieldCacheReadTokens, field.TypeInt64, value)
+	}
+	if value, ok := _u.mutation.CacheCreationTokens(); ok {
+		_spec.SetField(usageupstreamattempt.FieldCacheCreationTokens, field.TypeInt64, value)
+	}
+	if value, ok := _u.mutation.AddedCacheCreationTokens(); ok {
+		_spec.AddField(usageupstreamattempt.FieldCacheCreationTokens, field.TypeInt64, value)
 	}
 	if value, ok := _u.mutation.CacheCreation5mTokens(); ok {
 		_spec.SetField(usageupstreamattempt.FieldCacheCreation5mTokens, field.TypeInt64, value)
@@ -1193,6 +1225,27 @@ func (_u *UsageUpstreamAttemptUpdateOne) SetNillableCacheReadTokens(v *int64) *U
 // AddCacheReadTokens adds value to the "cache_read_tokens" field.
 func (_u *UsageUpstreamAttemptUpdateOne) AddCacheReadTokens(v int64) *UsageUpstreamAttemptUpdateOne {
 	_u.mutation.AddCacheReadTokens(v)
+	return _u
+}
+
+// SetCacheCreationTokens sets the "cache_creation_tokens" field.
+func (_u *UsageUpstreamAttemptUpdateOne) SetCacheCreationTokens(v int64) *UsageUpstreamAttemptUpdateOne {
+	_u.mutation.ResetCacheCreationTokens()
+	_u.mutation.SetCacheCreationTokens(v)
+	return _u
+}
+
+// SetNillableCacheCreationTokens sets the "cache_creation_tokens" field if the given value is not nil.
+func (_u *UsageUpstreamAttemptUpdateOne) SetNillableCacheCreationTokens(v *int64) *UsageUpstreamAttemptUpdateOne {
+	if v != nil {
+		_u.SetCacheCreationTokens(*v)
+	}
+	return _u
+}
+
+// AddCacheCreationTokens adds value to the "cache_creation_tokens" field.
+func (_u *UsageUpstreamAttemptUpdateOne) AddCacheCreationTokens(v int64) *UsageUpstreamAttemptUpdateOne {
+	_u.mutation.AddCacheCreationTokens(v)
 	return _u
 }
 
@@ -1705,6 +1758,11 @@ func (_u *UsageUpstreamAttemptUpdateOne) check() error {
 			return &ValidationError{Name: "cache_read_tokens", err: fmt.Errorf(`ent: validator failed for field "UsageUpstreamAttempt.cache_read_tokens": %w`, err)}
 		}
 	}
+	if v, ok := _u.mutation.CacheCreationTokens(); ok {
+		if err := usageupstreamattempt.CacheCreationTokensValidator(v); err != nil {
+			return &ValidationError{Name: "cache_creation_tokens", err: fmt.Errorf(`ent: validator failed for field "UsageUpstreamAttempt.cache_creation_tokens": %w`, err)}
+		}
+	}
 	if v, ok := _u.mutation.CacheCreation5mTokens(); ok {
 		if err := usageupstreamattempt.CacheCreation5mTokensValidator(v); err != nil {
 			return &ValidationError{Name: "cache_creation_5m_tokens", err: fmt.Errorf(`ent: validator failed for field "UsageUpstreamAttempt.cache_creation_5m_tokens": %w`, err)}
@@ -1838,6 +1896,12 @@ func (_u *UsageUpstreamAttemptUpdateOne) sqlSave(ctx context.Context) (_node *Us
 	}
 	if value, ok := _u.mutation.AddedCacheReadTokens(); ok {
 		_spec.AddField(usageupstreamattempt.FieldCacheReadTokens, field.TypeInt64, value)
+	}
+	if value, ok := _u.mutation.CacheCreationTokens(); ok {
+		_spec.SetField(usageupstreamattempt.FieldCacheCreationTokens, field.TypeInt64, value)
+	}
+	if value, ok := _u.mutation.AddedCacheCreationTokens(); ok {
+		_spec.AddField(usageupstreamattempt.FieldCacheCreationTokens, field.TypeInt64, value)
 	}
 	if value, ok := _u.mutation.CacheCreation5mTokens(); ok {
 		_spec.SetField(usageupstreamattempt.FieldCacheCreation5mTokens, field.TypeInt64, value)

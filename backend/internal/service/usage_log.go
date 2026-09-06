@@ -227,6 +227,7 @@ type UsageUpstreamAttempt struct {
 	InputTokens                   int64
 	OutputTokens                  int64
 	CacheReadTokens               int64
+	CacheCreationTokens           int64
 	CacheCreation5mTokens         int64
 	CacheCreation1hTokens         int64
 	RequestCount                  int64
@@ -279,6 +280,7 @@ func BuildFinalUsageUpstreamAttempt(log *UsageLog) (UsageUpstreamAttempt, bool) 
 		InputTokens:                   int64(max(log.InputTokens, 0)),
 		OutputTokens:                  int64(max(log.OutputTokens, 0)),
 		CacheReadTokens:               int64(max(log.CacheReadTokens, 0)),
+		CacheCreationTokens:           int64(max(log.CacheCreationTokens, 0)),
 		CacheCreation5mTokens:         int64(max(log.CacheCreation5mTokens, 0)),
 		CacheCreation1hTokens:         int64(max(log.CacheCreation1hTokens, 0)),
 		RequestCount:                  requestCount,
@@ -292,7 +294,7 @@ func BuildFinalUsageUpstreamAttempt(log *UsageLog) (UsageUpstreamAttempt, bool) 
 		CompletedAt:                   log.CreatedAt,
 		CreatedAt:                     log.CreatedAt,
 	}
-	attempt.Billable = attempt.InputTokens > 0 || attempt.OutputTokens > 0 || attempt.CacheReadTokens > 0 ||
+	attempt.Billable = attempt.InputTokens > 0 || attempt.OutputTokens > 0 || attempt.CacheReadTokens > 0 || attempt.CacheCreationTokens > 0 ||
 		attempt.CacheCreation5mTokens > 0 || attempt.CacheCreation1hTokens > 0 || attempt.RequestCount > 0 ||
 		attempt.ImageCount > 0 || attempt.VideoSeconds > 0
 	return attempt, attempt.Billable
@@ -366,6 +368,7 @@ func sameUsageUpstreamAttempt(left, right UsageUpstreamAttempt) bool {
 		left.InputTokens == right.InputTokens &&
 		left.OutputTokens == right.OutputTokens &&
 		left.CacheReadTokens == right.CacheReadTokens &&
+		left.CacheCreationTokens == right.CacheCreationTokens &&
 		left.CacheCreation5mTokens == right.CacheCreation5mTokens &&
 		left.CacheCreation1hTokens == right.CacheCreation1hTokens &&
 		left.RequestCount == right.RequestCount &&

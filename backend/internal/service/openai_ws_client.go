@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"io"
 	"net/http"
 	"net/url"
 	"strings"
@@ -97,7 +98,12 @@ func (d *coderOpenAIWSClientDialer) Dial(
 			status = resp.StatusCode
 			respHeaders = cloneHeader(resp.Header)
 		}
-		return nil, status, respHeaders, err
+		var responseBody []byte
+		if resp != nil && resp.Body != nil {
+			responseBody, _ = io.ReadAll(io.LimitReader(resp.Body, 2<<20))
+			_ = resp.Body.Close()
+		}
+		return nil, status, respHeaders, &openAIWSDialError{StatusCode: status, ResponseHeaders: respHeaders, ResponseBody: responseBody, Err: err}
 	}
 	// coder/websocket 默认单消息读取上限为 32KB，Codex WS 事件（如 rate_limits/大 delta）
 	// 可能超过该阈值，需显式提高上限，避免本地 read_fail(message too big)。

@@ -4,6 +4,7 @@ package service
 import (
 	"encoding/json"
 	"errors"
+	"fmt"
 	"hash/fnv"
 	"log/slog"
 	"reflect"
@@ -144,7 +145,43 @@ func (a *Account) IsSchedulable() bool {
 	if a.IsAPIKeyOrBedrock() && a.IsQuotaExceeded() {
 		return false
 	}
+	if a.IsCNQuotaExhausted() {
+		return false
+	}
 	return true
+}
+
+// IsCNQuotaExhausted disables domestic OpenAI-compatible accounts only when a
+// fresh, explicit quota snapshot says no balance remains. Unknown, failed and
+// stale snapshots are intentionally schedulable so a transient probe failure
+// cannot turn into a false zero-balance outage.
+func (a *Account) IsCNQuotaExhausted() bool {
+	if a == nil || !isDomesticOpenAICompatiblePlatform(a.Platform) || a.Extra == nil {
+		return false
+	}
+	snapshot := decodeCNQuotaSnapshot(a.Extra[CNQuotaSnapshotExtraKey])
+	return cnProviderSnapshotBlocksScheduling(snapshot, time.Now())
+}
+
+func parseQuotaSnapshotNumber(value any) (float64, bool) {
+	switch n := value.(type) {
+	case float64:
+		return n, true
+	case float32:
+		return float64(n), true
+	case int:
+		return float64(n), true
+	case int64:
+		return float64(n), true
+	case json.Number:
+		v, err := n.Float64()
+		return v, err == nil
+	case string:
+		v, err := strconv.ParseFloat(strings.TrimSpace(n), 64)
+		return v, err == nil
+	default:
+		return 0, false
+	}
 }
 
 func (a *Account) IsRateLimited() bool {
@@ -1052,16 +1089,121 @@ func (a *Account) IsSeedaceURLRelayEnabled() bool {
 }
 
 func (a *Account) GetOpenAIBaseURL() string {
-	if !a.IsOpenAI() {
+	if a == nil || !a.IsOpenAICompatible() {
 		return ""
 	}
 	if a.Type == AccountTypeAPIKey {
-		baseURL := a.GetCredential("base_url")
-		if baseURL != "" {
+		if baseURL := a.GetOpenAIBaseURLForProtocol(a.GetOpenAIAPIProtocol()); baseURL != "" {
 			return baseURL
 		}
 	}
-	return "https://api.openai.com"
+	switch a.Platform {
+	case PlatformKimi:
+		return "https://api.moonshot.cn"
+	case PlatformZhipu:
+		return "https://open.bigmodel.cn/api/paas"
+	case PlatformDeepSeek:
+		return "https://api.deepseek.com"
+	default:
+		return "https://api.openai.com"
+	}
+}
+
+const (
+	OpenAIAPIProtocolAdaptive   = "adaptive"
+	OpenAIAPIProtocolChat       = "chat_completions"
+	OpenAIAPIProtocolAnthropic  = "anthropic"
+	OpenAIAPIProtocolResponses  = "responses"
+	openAIAPIBaseURLsCredential = "api_base_urls"
+	openAIAPIProtocolCredential = "api_protocol"
+)
+
+func (a *Account) GetOpenAIAPIProtocol() string {
+	if a == nil || !a.IsOpenAICompatibleAPIKey() {
+		return OpenAIAPIProtocolAdaptive
+	}
+	switch strings.ToLower(strings.TrimSpace(a.GetCredential(openAIAPIProtocolCredential))) {
+	case OpenAIAPIProtocolChat, OpenAIAPIProtocolAnthropic, OpenAIAPIProtocolResponses:
+		return strings.ToLower(strings.TrimSpace(a.GetCredential(openAIAPIProtocolCredential)))
+	default:
+		return OpenAIAPIProtocolAdaptive
+	}
+}
+
+func (a *Account) GetOpenAIBaseURLForProtocol(protocol string) string {
+	if a == nil || a.Credentials == nil {
+		return ""
+	}
+	if raw, ok := a.Credentials[openAIAPIBaseURLsCredential].(map[string]any); ok {
+		if value, ok := raw[protocol].(string); ok && strings.TrimSpace(value) != "" {
+			return strings.TrimRight(strings.TrimSpace(value), "/")
+		}
+	}
+	if baseURL := strings.TrimSpace(a.GetCredential("base_url")); baseURL != "" {
+		return strings.TrimRight(baseURL, "/")
+	}
+	switch a.Platform {
+	case PlatformKimi:
+		return "https://api.moonshot.cn"
+	case PlatformZhipu:
+		return "https://open.bigmodel.cn/api/paas"
+	case PlatformDeepSeek:
+		return "https://api.deepseek.com"
+	default:
+		return "https://api.openai.com"
+	}
+}
+
+func (a *Account) UsesNativeResponsesForDomesticProvider() bool {
+	if a == nil || a.Platform != PlatformDeepSeek || a.Credentials == nil {
+		return false
+	}
+	protocol := a.GetOpenAIAPIProtocol()
+	return (protocol == OpenAIAPIProtocolAdaptive || protocol == OpenAIAPIProtocolResponses) && hasProtocolBaseURL(a.Credentials, OpenAIAPIProtocolResponses)
+}
+
+func ValidateDomesticOpenAIAccountCredentials(platform, accountType string, credentials map[string]any) error {
+	if !isDomesticOpenAICompatiblePlatform(platform) {
+		return nil
+	}
+	if accountType != AccountTypeAPIKey {
+		return fmt.Errorf("%s accounts must use api key authentication", platform)
+	}
+	protocol := OpenAIAPIProtocolAdaptive
+	if value, ok := credentials[openAIAPIProtocolCredential].(string); ok && strings.TrimSpace(value) != "" {
+		protocol = strings.ToLower(strings.TrimSpace(value))
+	}
+	if protocol != OpenAIAPIProtocolAdaptive && protocol != OpenAIAPIProtocolChat && protocol != OpenAIAPIProtocolAnthropic && protocol != OpenAIAPIProtocolResponses {
+		return fmt.Errorf("unsupported api_protocol %q", protocol)
+	}
+	// A fixed protocol is an explicit contract: its selected endpoint must be
+	// present in api_base_urls. The legacy generic base_url remains valid only
+	// for adaptive accounts, where the gateway chooses a controlled default or
+	// a protocol-specific override.
+	selectedProtocol := protocol
+	// Kimi and Zhipu Responses ingress is a controlled bridge to their native
+	// Chat endpoint; the Responses URL is not used by that bridge.
+	if protocol == OpenAIAPIProtocolResponses && platform != PlatformDeepSeek {
+		selectedProtocol = OpenAIAPIProtocolChat
+	}
+	if protocol != OpenAIAPIProtocolAdaptive && !hasProtocolBaseURL(credentials, selectedProtocol) {
+		return fmt.Errorf("%s endpoint is required for api_protocol=%s", selectedProtocol, protocol)
+	}
+	return nil
+}
+
+func stringCredential(credentials map[string]any, key string) string {
+	value, _ := credentials[key].(string)
+	return value
+}
+
+func hasProtocolBaseURL(credentials map[string]any, protocol string) bool {
+	raw, ok := credentials[openAIAPIBaseURLsCredential].(map[string]any)
+	if !ok {
+		return false
+	}
+	value, _ := raw[protocol].(string)
+	return strings.TrimSpace(value) != ""
 }
 
 // OpenAIStructuredOutputMode controls compatibility handling for JSON Schema
@@ -1112,10 +1254,10 @@ func (a *Account) GetOpenAIIDToken() string {
 }
 
 func (a *Account) GetOpenAIApiKey() string {
-	if !a.IsOpenAIApiKey() {
+	if !a.IsOpenAICompatibleAPIKey() {
 		return ""
 	}
-	return a.GetCredential("api_key")
+	return strings.TrimSpace(a.GetCredential("api_key"))
 }
 
 func (a *Account) GetOpenAIUserAgent() string {

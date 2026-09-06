@@ -178,6 +178,42 @@ func (s *OpenAIGatewayService) setStickySessionAccountID(ctx context.Context, gr
 	return nil
 }
 
+type openAIStickySessionClaimer interface {
+	ClaimSessionAccountID(ctx context.Context, groupID int64, sessionHash string, accountID int64, ttl time.Duration) (boundAccountID int64, claimed bool, err error)
+}
+
+// claimStickySessionAccountID preserves the first selected account under
+// concurrent HTTP requests. Older cache implementations keep the previous
+// set-and-overwrite behavior for compatibility.
+func (s *OpenAIGatewayService) claimStickySessionAccountID(ctx context.Context, groupID *int64, sessionHash string, accountID int64, ttl time.Duration) (boundAccountID int64, claimed bool, err error) {
+	if s == nil || s.cache == nil || accountID <= 0 {
+		return accountID, true, nil
+	}
+	primaryKey := s.openAISessionCacheKey(sessionHash)
+	if primaryKey == "" {
+		return accountID, true, nil
+	}
+
+	claimer, supported := s.cache.(openAIStickySessionClaimer)
+	if !supported {
+		return accountID, true, s.setStickySessionAccountID(ctx, groupID, sessionHash, accountID, ttl)
+	}
+	boundAccountID, claimed, err = claimer.ClaimSessionAccountID(ctx, derefGroupID(groupID), primaryKey, accountID, ttl)
+	if err != nil || !claimed || !s.openAISessionHashDualWriteOldEnabled() {
+		return boundAccountID, claimed, err
+	}
+
+	legacyKey := s.openAILegacySessionCacheKey(ctx, sessionHash)
+	if legacyKey == "" {
+		return boundAccountID, claimed, nil
+	}
+	if err := s.cache.SetSessionAccountID(ctx, derefGroupID(groupID), legacyKey, accountID, s.openAIStickyLegacyTTL(ttl)); err != nil {
+		return boundAccountID, claimed, err
+	}
+	openAIStickyLegacyDualWriteTotal.Add(1)
+	return boundAccountID, claimed, nil
+}
+
 func (s *OpenAIGatewayService) refreshStickySessionTTL(ctx context.Context, groupID *int64, sessionHash string, ttl time.Duration) error {
 	if s == nil || s.cache == nil {
 		return nil

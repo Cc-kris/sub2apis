@@ -253,6 +253,9 @@
           <template #cell-usage="{ row }">
             <div v-if="usageLoading" class="text-xs text-gray-400">—</div>
             <div v-else class="space-y-0.5 text-xs">
+              <div v-if="usageMap.get(row.id)?.group_usage_source && usageMap.get(row.id)?.group_usage_source !== 'rollup'" class="text-amber-600 dark:text-amber-400" data-testid="group-usage-source">
+                {{ usageSourceLabel(usageMap.get(row.id)?.group_usage_source) }}
+              </div>
               <div class="text-gray-500 dark:text-gray-400">
                 <span class="text-gray-400 dark:text-gray-500">{{
                   t("admin.groups.usageToday")
@@ -508,6 +511,15 @@
             :placeholder="t('admin.groups.form.rpmLimitPlaceholder')"
           />
           <p class="input-hint">{{ t("admin.groups.form.rpmLimitHint") }}</p>
+        </div>
+        <div class="rounded-lg border border-gray-200 p-3 dark:border-dark-600">
+          <label class="flex items-center gap-2 text-sm font-medium text-gray-700 dark:text-gray-300">
+            <input v-model="createForm.long_context_pricing_enabled" type="checkbox" class="rounded border-gray-300 text-primary-600" />
+            {{ t("admin.groups.form.longContextPricing", "启用长上下文阶梯价格") }}
+          </label>
+          <label class="input-label mt-3">{{ t("admin.groups.form.modelPricingJson", "逐模型价格规则 JSON") }}</label>
+          <textarea v-model="createForm.model_pricing_json" rows="5" class="input font-mono text-xs" placeholder='{"gpt-5":{"input":"0.000002","intervals":[{"min_tokens":0,"max_tokens":1000,"input":"0.000003"}]}}' />
+          <p class="input-hint">{{ t("admin.groups.form.modelPricingHint", "区间使用 (min,max]；保存前会检查价格和重叠。") }}</p>
         </div>
         <div
           v-if="createForm.subscription_type !== 'subscription'"
@@ -1004,9 +1016,9 @@
           </div>
         </div>
 
-        <!-- OpenAI Messages 调度配置（仅 openai 平台） -->
+        <!-- OpenAI 兼容平台的 Messages 调度配置 -->
         <div
-          v-if="createForm.platform === 'openai'"
+          v-if="supportsMessagesDispatchPlatform(createForm.platform)"
           class="border-t border-gray-200 dark:border-dark-400 pt-4 mt-4"
         >
           <h4 class="text-sm font-medium text-gray-700 dark:text-gray-300 mb-3">
@@ -1231,7 +1243,7 @@
           </div>
         </div>
 
-        <!-- 账号过滤控制 (OpenAI/Antigravity/Anthropic/Gemini/Seedace) -->
+        <!-- 账号过滤控制（仅存在 OAuth/隐私状态的账号平台） -->
         <div
           v-if="
             ['openai', 'antigravity', 'anthropic', 'gemini', 'seedace'].includes(
@@ -1739,6 +1751,15 @@
           />
           <p class="input-hint">{{ t("admin.groups.form.rpmLimitHint") }}</p>
         </div>
+        <div class="rounded-lg border border-gray-200 p-3 dark:border-dark-600">
+          <label class="flex items-center gap-2 text-sm font-medium text-gray-700 dark:text-gray-300">
+            <input v-model="editForm.long_context_pricing_enabled" type="checkbox" class="rounded border-gray-300 text-primary-600" />
+            {{ t("admin.groups.form.longContextPricing", "启用长上下文阶梯价格") }}
+          </label>
+          <label class="input-label mt-3">{{ t("admin.groups.form.modelPricingJson", "逐模型价格规则 JSON") }}</label>
+          <textarea v-model="editForm.model_pricing_json" rows="5" class="input font-mono text-xs" placeholder='{"gpt-5":{"input":"0.000002"}}' />
+          <p class="input-hint">{{ t("admin.groups.form.modelPricingHint", "区间使用 (min,max]；保存前会检查价格和重叠。") }}</p>
+        </div>
         <div v-if="editForm.subscription_type !== 'subscription'">
           <div class="mb-1.5 flex items-center gap-1">
             <label class="text-sm font-medium text-gray-700 dark:text-gray-300">
@@ -2232,9 +2253,9 @@
           </div>
         </div>
 
-        <!-- OpenAI Messages 调度配置（仅 openai 平台） -->
+        <!-- OpenAI 兼容平台的 Messages 调度配置 -->
         <div
-          v-if="editForm.platform === 'openai'"
+          v-if="supportsMessagesDispatchPlatform(editForm.platform)"
           class="border-t border-gray-200 dark:border-dark-400 pt-4 mt-4"
         >
           <h4 class="text-sm font-medium text-gray-700 dark:text-gray-300 mb-3">
@@ -2459,7 +2480,7 @@
           </div>
         </div>
 
-        <!-- 账号过滤控制 (OpenAI/Antigravity/Anthropic/Gemini/Seedace) -->
+        <!-- 账号过滤控制（仅存在 OAuth/隐私状态的账号平台） -->
         <div
           v-if="
             ['openai', 'antigravity', 'anthropic', 'gemini', 'seedace'].includes(
@@ -2930,7 +2951,7 @@ import { useI18n } from "vue-i18n";
 import { useAppStore } from "@/stores/app";
 import { useOnboardingStore } from "@/stores/onboarding";
 import { adminAPI } from "@/api/admin";
-import type { AdminGroup, GroupPlatform, SubscriptionType } from "@/types";
+import type { AdminGroup, GroupPlatform, SubscriptionType, GroupModelPricing } from "@/types";
 import type { Column } from "@/components/common/types";
 import AppLayout from "@/components/layout/AppLayout.vue";
 import TablePageLayout from "@/components/layout/TablePageLayout.vue";
@@ -2955,6 +2976,7 @@ import {
   messagesDispatchConfigToFormState,
   messagesDispatchFormStateToConfig,
   resetMessagesDispatchFormState,
+  supportsMessagesDispatchPlatform,
   type MessagesDispatchMappingRow,
 } from "./groupsMessagesDispatch";
 import { normalizeSupportedModelScopesForPlatform } from "./groupsSupportedModelScopes";
@@ -3020,6 +3042,9 @@ const platformOptions = computed(() => [
   { value: "antigravity", label: "Antigravity" },
   { value: "grok", label: "Grok" },
   { value: "seedace", label: "Seedace" },
+  { value: "kimi", label: "Kimi" },
+  { value: "zhipu", label: "智谱" },
+  { value: "deepseek", label: "DeepSeek" },
 ]);
 
 const platformFilterOptions = computed(() => [
@@ -3030,6 +3055,9 @@ const platformFilterOptions = computed(() => [
   { value: "antigravity", label: "Antigravity" },
   { value: "grok", label: "Grok" },
   { value: "seedace", label: "Seedace" },
+  { value: "kimi", label: "Kimi" },
+  { value: "zhipu", label: "智谱" },
+  { value: "deepseek", label: "DeepSeek" },
 ]);
 
 const editStatusOptions = computed(() => [
@@ -3144,7 +3172,7 @@ const copyAccountsGroupOptionsForEdit = computed(() => {
 
 const groups = ref<AdminGroup[]>([]);
 const loading = ref(false);
-const usageMap = ref<Map<number, { today_cost: number; total_cost: number }>>(
+const usageMap = ref<Map<number, { today_cost: number; total_cost: number; group_usage_source?: string }>>(
   new Map(),
 );
 const usageLoading = ref(false);
@@ -3241,6 +3269,8 @@ const createForm = reactive({
   copy_accounts_from_group_ids: [] as number[],
   // 分组级 RPM 限制（每用户每分钟最大请求数；0 = 不限制）
   rpm_limit: 0 as number,
+	long_context_pricing_enabled: true,
+	model_pricing_json: "{}",
 });
 
 // 简单账号类型（用于模型路由选择）
@@ -3530,6 +3560,8 @@ const editForm = reactive({
   mcp_xml_inject: true,
   // 从分组复制账号
   copy_accounts_from_group_ids: [] as number[],
+	long_context_pricing_enabled: true,
+	model_pricing_json: "{}",
   // 分组级 RPM 限制（每用户每分钟最大请求数；0 = 不限制）
   rpm_limit: 0 as number,
 });
@@ -3656,16 +3688,24 @@ const formatCost = (cost: number): string => {
   return cost.toFixed(2);
 };
 
+const usageSourceLabel = (source?: string): string => {
+  if (source === "realtime_bootstrapping") return "实时回填中"
+  if (source === "degraded") return "实时降级"
+  if (source === "realtime") return "实时数据"
+  return source || ""
+}
+
 const loadUsageSummary = async () => {
   usageLoading.value = true;
   try {
     const tz = Intl.DateTimeFormat().resolvedOptions().timeZone;
     const data = await adminAPI.groups.getUsageSummary(tz);
-    const map = new Map<number, { today_cost: number; total_cost: number }>();
+    const map = new Map<number, { today_cost: number; total_cost: number; group_usage_source?: string }>();
     for (const item of data) {
       map.set(item.group_id, {
         today_cost: item.today_cost,
         total_cost: item.total_cost,
+        group_usage_source: item.group_usage_source,
       });
     }
     usageMap.value = map;
@@ -3767,6 +3807,8 @@ const closeCreateModal = () => {
   createForm.require_privacy_set = false;
   createForm.supported_model_scopes = ["claude", "gemini_text", "gemini_image"];
   createForm.mcp_xml_inject = true;
+	createForm.long_context_pricing_enabled = true;
+	createForm.model_pricing_json = "{}";
   createForm.copy_accounts_from_group_ids = [];
   createModelRoutingRules.value = [];
 };
@@ -3790,6 +3832,16 @@ const normalizeOptionalLimit = (
   return Number.isFinite(value) && value > 0 ? value : null;
 };
 
+const parseGroupModelPricing = (raw: string): Record<string, GroupModelPricing> => {
+  const trimmed = raw.trim();
+  if (!trimmed) return {};
+  const parsed: unknown = JSON.parse(trimmed);
+  if (!parsed || Array.isArray(parsed) || typeof parsed !== "object") {
+    throw new Error(t("admin.groups.form.modelPricingInvalid", "逐模型价格必须是 JSON 对象"));
+  }
+  return parsed as Record<string, GroupModelPricing>;
+};
+
 const normalizeImageRateMultiplier = (
   value: number | string | null | undefined,
 ): number => {
@@ -3810,6 +3862,7 @@ const handleCreateGroup = async () => {
     // 构建请求数据，包含模型路由配置
     const requestData = {
       ...createForm,
+		model_pricing: parseGroupModelPricing(createForm.model_pricing_json),
       daily_limit_usd: normalizeOptionalLimit(
         createForm.daily_limit_usd as number | string | null,
       ),
@@ -3827,7 +3880,7 @@ const handleCreateGroup = async () => {
         createForm.supported_model_scopes,
       ),
       messages_dispatch_model_config:
-        createForm.platform === "openai"
+        supportsMessagesDispatchPlatform(createForm.platform)
           ? messagesDispatchFormStateToConfig({
               allow_messages_dispatch: createForm.allow_messages_dispatch,
               opus_mapped_model: createForm.opus_mapped_model,
@@ -3920,6 +3973,8 @@ const handleEdit = async (group: AdminGroup) => {
   editForm.mcp_xml_inject = group.mcp_xml_inject ?? true;
   editForm.copy_accounts_from_group_ids = []; // 复制账号字段每次编辑时重置为空
   editForm.rpm_limit = group.rpm_limit ?? 0;
+	editForm.long_context_pricing_enabled = group.long_context_pricing_enabled ?? true;
+	editForm.model_pricing_json = JSON.stringify(group.model_pricing ?? {}, null, 2);
   // 加载模型路由规则（异步加载账号名称）
   editModelRoutingRules.value = await convertApiFormatToRoutingRules(
     group.model_routing,
@@ -3951,6 +4006,7 @@ const handleUpdateGroup = async () => {
     // 转换 fallback_group_id: null -> 0 (后端使用 0 表示清除)
     const payload = {
       ...editForm,
+		model_pricing: parseGroupModelPricing(editForm.model_pricing_json),
       daily_limit_usd: normalizeOptionalLimit(
         editForm.daily_limit_usd as number | string | null,
       ),
@@ -3977,7 +4033,7 @@ const handleUpdateGroup = async () => {
         editForm.supported_model_scopes,
       ),
       messages_dispatch_model_config:
-        editForm.platform === "openai"
+        supportsMessagesDispatchPlatform(editForm.platform)
           ? messagesDispatchFormStateToConfig({
               allow_messages_dispatch: editForm.allow_messages_dispatch,
               opus_mapped_model: editForm.opus_mapped_model,
@@ -4083,7 +4139,7 @@ watch(
     if (!["anthropic", "antigravity"].includes(newVal)) {
       createForm.fallback_group_id_on_invalid_request = null;
     }
-    if (newVal !== "openai") {
+    if (!supportsMessagesDispatchPlatform(newVal)) {
       resetMessagesDispatchFormState(createForm);
     }
     if (!["openai", "antigravity", "anthropic", "gemini", "seedace"].includes(newVal)) {
@@ -4099,7 +4155,7 @@ watch(
     if (!["anthropic", "antigravity"].includes(newVal)) {
       editForm.fallback_group_id_on_invalid_request = null;
     }
-    if (newVal !== "openai") {
+    if (!supportsMessagesDispatchPlatform(newVal)) {
       resetMessagesDispatchFormState(editForm);
     }
     if (!["openai", "antigravity", "anthropic", "gemini", "seedace"].includes(newVal)) {
@@ -4108,19 +4164,6 @@ watch(
     }
   },
 );
-
-watch(
-  () => editForm.platform,
-  (newVal) => {
-    if (!['anthropic', 'antigravity'].includes(newVal)) {
-      editForm.fallback_group_id_on_invalid_request = null
-    }
-    if (newVal !== 'openai') {
-      editForm.allow_messages_dispatch = false
-      editForm.default_mapped_model = ''
-    }
-  }
-)
 
 // 点击外部关闭账号搜索下拉框
 const handleClickOutside = (event: MouseEvent) => {

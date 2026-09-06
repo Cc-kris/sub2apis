@@ -14,7 +14,7 @@
           <div class="text-sm">
             <button
               v-if="row.user?.email"
-              class="font-medium text-primary-600 underline decoration-dashed underline-offset-2 transition-colors hover:text-primary-700 dark:text-primary-400 dark:hover:text-primary-300"
+              class="font-medium text-primary-700 underline decoration-dashed underline-offset-2 transition-colors hover:text-primary-800 dark:text-primary-300 dark:hover:text-primary-200"
               @click="$emit('userClick', row.user_id, row.user?.email)"
               :title="t('admin.usage.clickToViewBalance')"
             >
@@ -142,7 +142,7 @@
         <template #cell-cost="{ row }">
           <div class="text-sm">
             <div class="flex items-center gap-1.5">
-              <span class="font-medium text-green-600 dark:text-green-400">${{ row.actual_cost?.toFixed(6) || '0.000000' }}</span>
+              <span class="font-medium text-green-700 dark:text-green-300">${{ row.actual_cost?.toFixed(6) || '0.000000' }}</span>
               <!-- Cost Detail Tooltip -->
               <div
                 class="group relative"
@@ -154,19 +154,25 @@
                 </div>
               </div>
             </div>
-            <div v-if="row.account_rate_multiplier != null" class="mt-0.5 text-[11px] text-orange-500 dark:text-orange-400">
+            <div v-if="row.account_rate_multiplier != null" class="mt-0.5 text-[11px] text-orange-700 dark:text-orange-300">
               A ${{ accountBilled(row).toFixed(6) }}
             </div>
           </div>
         </template>
 
-        <template #cell-first_token="{ row }">
-          <span v-if="row.first_token_ms != null" class="text-sm text-gray-600 dark:text-gray-400">{{ formatDuration(row.first_token_ms) }}</span>
-          <span v-else class="text-sm text-gray-400 dark:text-gray-500">-</span>
+        <template #cell-latency_health="{ row }">
+          <UsageLatencyHealth
+            :first-token-ms="row.first_token_ms"
+            :duration-ms="row.duration_ms"
+            :is-error="(row.status_code ?? 200) >= 400 || !!row.error_message"
+            :first-token-label="t('usage.firstTokenShort')"
+            :duration-label="t('usage.durationTotal')"
+          />
         </template>
 
-        <template #cell-duration="{ row }">
-          <span class="text-sm text-gray-600 dark:text-gray-400">{{ formatDuration(row.duration_ms) }}</span>
+        <template #cell-request_id="{ row }">
+          <button v-if="row.request_id" type="button" class="max-w-[180px] truncate font-mono text-xs text-primary-700 underline decoration-dashed underline-offset-2 dark:text-primary-300" :title="row.request_id" @click="$emit('requestClick', row.request_id)">{{ row.request_id }}</button>
+          <span v-else class="text-sm text-gray-400 dark:text-gray-500">-</span>
         </template>
 
         <template #cell-created_at="{ value }">
@@ -430,6 +436,7 @@ import EmptyState from '@/components/common/EmptyState.vue'
 import Icon from '@/components/icons/Icon.vue'
 import type { AdminUsageLog } from '@/types'
 import type { Column } from '@/components/common/types'
+import UsageLatencyHealth from './UsageLatencyHealth.vue'
 
 interface Props {
   data: AdminUsageLog[]
@@ -449,6 +456,7 @@ withDefaults(defineProps<Props>(), {
 defineEmits<{
   userClick: [userID: number, email?: string]
   sort: [key: string, order: 'asc' | 'desc']
+  requestClick: [requestID: string]
 }>()
 const { t } = useI18n()
 
@@ -482,12 +490,6 @@ const getRequestTypeBadgeClass = (row: AdminUsageLog): string => {
 
 const formatUserAgent = (ua: string): string => {
   return ua
-}
-
-const formatDuration = (ms: number | null | undefined): string => {
-  if (ms == null) return '-'
-  if (ms < 1000) return `${ms}ms`
-  return `${(ms / 1000).toFixed(2)}s`
 }
 
 // Cost tooltip functions

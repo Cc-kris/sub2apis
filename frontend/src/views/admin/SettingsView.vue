@@ -44,24 +44,6 @@
           </nav>
         </div>
 
-        <div class="rounded-2xl border border-primary-100 bg-primary-50/60 p-4 dark:border-primary-900/40 dark:bg-primary-900/10">
-          <div class="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
-            <div>
-              <div class="text-sm font-semibold text-gray-900 dark:text-white">{{ t('admin.cacheManagement.title') }}</div>
-              <p class="mt-1 text-xs text-gray-600 dark:text-gray-300">
-                {{ t('admin.cacheManagement.description') }}
-              </p>
-            </div>
-            <router-link
-              to="/admin/settings/cache"
-              class="inline-flex items-center justify-center gap-2 rounded-xl bg-primary-600 px-4 py-2 text-sm font-medium text-white hover:bg-primary-700"
-            >
-              {{ t('admin.settings.cacheManagementEntry.open') }}
-              <span aria-hidden="true">→</span>
-            </router-link>
-          </div>
-        </div>
-
         <!-- Tab: Security — Admin API Key -->
         <div v-show="activeTab === 'security'" class="space-y-6">
           <!-- Admin API Key Settings -->
@@ -90,6 +72,21 @@
                   <p class="ml-3 text-sm text-amber-700 dark:text-amber-300">
                     {{ t("admin.settings.adminApiKey.securityWarning") }}
                   </p>
+                </div>
+              </div>
+
+              <div class="border-t border-gray-100 pt-4 dark:border-dark-700">
+                <div class="flex items-center justify-between">
+                  <div>
+                    <label class="font-medium text-gray-900 dark:text-white">{{ t("admin.settings.registration.domainLimit") }}</label>
+                    <p class="mt-1 text-sm text-gray-500 dark:text-gray-400">{{ t("admin.settings.registration.domainLimitHint") }}</p>
+                  </div>
+                  <Toggle v-model="form.registration_domain_limit_enabled" />
+                </div>
+                <div class="mt-3 flex items-center gap-2">
+                  <label class="sr-only" for="settings-registration-domain-limit">{{ t("admin.settings.registration.domainLimit") }}</label>
+                  <input id="settings-registration-domain-limit" v-model.number="form.registration_domain_limit_per_domain" type="number" min="1" max="1000" class="w-28 rounded border border-gray-300 px-2 py-1 text-sm dark:border-dark-500 dark:bg-dark-700" :disabled="!form.registration_domain_limit_enabled" />
+                  <span class="text-sm text-gray-500 dark:text-gray-400">{{ t("admin.settings.registration.domainLimitUnit") }}</span>
                 </div>
               </div>
 
@@ -1483,6 +1480,19 @@
                 </p>
               </div>
 
+              <!-- x_search price -->
+              <div class="border-t border-gray-100 pt-4 dark:border-dark-700">
+                <label class="font-medium text-gray-900 dark:text-white">{{ t("admin.settings.registration.xSearchPrice") }}</label>
+                <p class="mt-1 text-sm text-gray-500 dark:text-gray-400">{{ t("admin.settings.registration.xSearchPriceHint") }}</p>
+                <p v-if="xSearchPriceLoadError" class="mt-1 text-sm text-amber-700 dark:text-amber-300">{{ t("admin.settings.registration.xSearchPriceLoadError") }}</p>
+                <div class="mt-3 flex max-w-md items-center gap-2">
+                  <label class="sr-only" for="settings-x-search-price">{{ t("admin.settings.registration.xSearchPrice") }}</label>
+                  <input id="settings-x-search-price" v-model="xSearchPricePerRequest" type="text" inputmode="decimal" class="input" placeholder="0.0010000000" :disabled="xSearchPriceLoading || xSearchPriceSaving" />
+                  <span class="whitespace-nowrap text-sm text-gray-500 dark:text-gray-400">USD / request</span>
+                </div>
+                <p v-if="xSearchPriceSaveError" class="mt-1 text-sm text-red-600 dark:text-red-400">{{ t("admin.settings.registration.xSearchPriceSaveError") }}</p>
+              </div>
+
               <!-- Promo Code -->
               <div
                 class="flex items-center justify-between border-t border-gray-100 pt-4 dark:border-dark-700"
@@ -1564,7 +1574,7 @@
                   <!-- Warning when encryption key not configured -->
                   <p
                     v-if="!form.totp_encryption_key_configured"
-                    class="mt-2 text-sm text-amber-600 dark:text-amber-400"
+                    class="mt-2 text-sm text-amber-700 dark:text-amber-300"
                   >
                     {{ t("admin.settings.registration.totpKeyNotConfigured") }}
                   </p>
@@ -2576,7 +2586,7 @@
                         <p class="text-sm text-gray-500 dark:text-gray-400">
                           {{ t("admin.settings.dingtalk.syncCorpEmailHint") }}
                         </p>
-                        <p class="text-xs text-amber-600 dark:text-amber-400 mt-1">
+                        <p class="text-xs text-amber-700 dark:text-amber-300 mt-1">
                           {{ t("admin.settings.dingtalk.syncCorpEmailPermissionHint") }}
                         </p>
                       </div>
@@ -2622,7 +2632,7 @@
                         <p class="text-sm text-gray-500 dark:text-gray-400">
                           {{ t("admin.settings.dingtalk.syncDeptHint") }}
                         </p>
-                        <p class="text-xs text-amber-600 dark:text-amber-400 mt-1">
+                        <p class="text-xs text-amber-700 dark:text-amber-300 mt-1">
                           {{ t("admin.settings.dingtalk.syncDeptPermissionHint") }}
                         </p>
                       </div>
@@ -3290,7 +3300,7 @@
                   <p class="mt-1 text-sm text-gray-500 dark:text-gray-400">
                     {{ t("admin.settings.defaults.defaultPlatformQuotasHint") }}
                   </p>
-                  <p class="mt-0.5 text-xs text-amber-600 dark:text-amber-400">
+                  <p class="mt-0.5 text-xs text-amber-700 dark:text-amber-300">
                     {{ t("admin.settings.defaults.platformQuotaNotice") }}
                   </p>
                 </div>
@@ -4502,11 +4512,13 @@
                 <div class="mt-4 grid grid-cols-1 gap-6 md:grid-cols-2">
                   <div>
                     <label
+                      for="settings-table-default-page-size"
                       class="mb-2 block text-sm font-medium text-gray-700 dark:text-gray-300"
                     >
                       {{ t("admin.settings.site.tableDefaultPageSize") }}
                     </label>
                     <input
+                      id="settings-table-default-page-size"
                       v-model.number="form.table_default_page_size"
                       type="number"
                       min="5"
@@ -4740,7 +4752,7 @@
                   {{ t("admin.settings.site.homeContentHint") }}
                 </p>
                 <!-- iframe CSP Warning -->
-                <p class="mt-2 text-xs text-amber-600 dark:text-amber-400">
+                <p class="mt-2 text-xs text-amber-700 dark:text-amber-300">
                   {{ t("admin.settings.site.homeContentIframeWarning") }}
                 </p>
               </div>
@@ -5045,10 +5057,11 @@
                 </div>
 
                 <div>
-                  <label class="mb-2 block text-sm font-medium text-gray-700 dark:text-gray-300">
+                  <label for="settings-translation-timeout" class="mb-2 block text-sm font-medium text-gray-700 dark:text-gray-300">
                     {{ localText("请求超时（秒）", "Request timeout (seconds)") }}
                   </label>
                   <input
+                    id="settings-translation-timeout"
                     v-model.number="form.announcement_translation_timeout_seconds"
                     type="number"
                     min="1"
@@ -5358,6 +5371,200 @@
                 </p>
               </div>
               <Toggle v-model="form.channel_monitor_public_enabled" />
+            </div>
+          </div>
+        </div>
+
+        <div class="card" data-testid="openai-team-linked-resolver-settings">
+          <div class="border-b border-gray-100 px-6 py-4 dark:border-dark-700">
+            <div class="flex flex-wrap items-center justify-between gap-3">
+              <div>
+                <h2 class="text-lg font-semibold text-gray-900 dark:text-white">
+                  {{ t('admin.settings.features.openaiTeamLinkedResolver.title') }}
+                </h2>
+                <p class="mt-1 text-sm text-gray-500 dark:text-gray-400">
+                  {{ t('admin.settings.features.openaiTeamLinkedResolver.description') }}
+                </p>
+              </div>
+              <span
+                class="rounded-full px-2.5 py-1 text-xs font-semibold"
+                :class="confirmedOpenAITeamLinkedResolverEnabled
+                  ? 'bg-green-100 text-green-700 dark:bg-green-900/30 dark:text-green-300'
+                  : 'bg-gray-100 text-gray-600 dark:bg-dark-700 dark:text-gray-300'"
+                data-testid="openai-team-linked-current-status"
+              >
+                {{ confirmedOpenAITeamLinkedResolverEnabled
+                  ? t('admin.settings.features.openaiTeamLinkedResolver.currentEnabled')
+                  : t('admin.settings.features.openaiTeamLinkedResolver.currentDisabled') }}
+              </span>
+            </div>
+          </div>
+          <div class="space-y-5 p-6">
+            <div
+              class="rounded-lg border border-amber-200 bg-amber-50 p-4 text-sm text-amber-800 dark:border-amber-800 dark:bg-amber-900/20 dark:text-amber-200"
+              role="alert"
+            >
+              {{ t('admin.settings.features.openaiTeamLinkedResolver.dangerWarning') }}
+            </div>
+
+            <div class="flex items-center justify-between gap-4">
+              <div>
+                <label class="text-sm font-medium text-gray-700 dark:text-gray-300">
+                  {{ t('admin.settings.features.openaiTeamLinkedResolver.enabled') }}
+                </label>
+                <p class="mt-0.5 text-xs text-gray-500 dark:text-gray-400">
+                  {{ t('admin.settings.features.openaiTeamLinkedResolver.enabledHint') }}
+                </p>
+              </div>
+              <Toggle
+                v-model="form.openai_team_linked_resolver_enabled"
+                data-testid="openai-team-linked-resolver-toggle"
+              />
+            </div>
+
+            <div>
+              <label class="input-label" for="openai-team-linked-change-reason">
+                {{ t('admin.settings.features.openaiTeamLinkedResolver.reason') }}
+                <span v-if="openAITeamLinkedResolverChanged" class="text-red-500">*</span>
+              </label>
+              <textarea
+                id="openai-team-linked-change-reason"
+                v-model="openAITeamLinkedChangeReason"
+                rows="3"
+                minlength="5"
+                maxlength="500"
+                class="input"
+                :aria-invalid="openAITeamLinkedResolverChanged && !isOpenAITeamLinkedChangeReasonValid"
+                :placeholder="t('admin.settings.features.openaiTeamLinkedResolver.reasonPlaceholder')"
+                data-testid="openai-team-linked-change-reason"
+              ></textarea>
+              <div class="mt-1 flex items-start justify-between gap-4 text-xs">
+                <p :class="openAITeamLinkedResolverChanged && !isOpenAITeamLinkedChangeReasonValid ? 'text-red-500' : 'text-gray-400'">
+                  {{ t('admin.settings.features.openaiTeamLinkedResolver.reasonHint') }}
+                </p>
+                <span class="flex-shrink-0 text-gray-400">{{ openAITeamLinkedChangeReason.length }}/500</span>
+              </div>
+            </div>
+          </div>
+        </div>
+
+        <div class="card">
+          <div class="border-b border-gray-100 px-6 py-4 dark:border-dark-700">
+            <h2 class="text-lg font-semibold text-gray-900 dark:text-white">
+              {{ t('admin.settings.features.groupUsageRollup.title') }}
+            </h2>
+            <p class="mt-1 text-sm text-gray-500 dark:text-gray-400">
+              {{ t('admin.settings.features.groupUsageRollup.description') }}
+            </p>
+          </div>
+          <div class="space-y-5 p-6">
+            <div class="flex items-center justify-between">
+              <div>
+                <label class="text-sm font-medium text-gray-700 dark:text-gray-300">
+                  {{ t('admin.settings.features.groupUsageRollup.enabled') }}
+                </label>
+                <p class="mt-0.5 text-xs text-gray-500 dark:text-gray-400">
+                  {{ t('admin.settings.features.groupUsageRollup.enabledHint') }}
+                </p>
+              </div>
+              <Toggle v-model="form.group_usage_rollup_enabled" />
+            </div>
+          </div>
+        </div>
+
+        <div class="card" data-testid="sales-pricing-resolver-settings">
+          <div class="border-b border-gray-100 px-6 py-4 dark:border-dark-700">
+            <div class="flex flex-wrap items-center justify-between gap-3">
+              <div>
+                <h2 class="text-lg font-semibold text-gray-900 dark:text-white">
+                  {{ t('admin.settings.features.salesPricingResolver.title') }}
+                </h2>
+                <p class="mt-1 text-sm text-gray-500 dark:text-gray-400">
+                  {{ t('admin.settings.features.salesPricingResolver.description') }}
+                </p>
+              </div>
+              <span
+                class="rounded-full px-2.5 py-1 text-xs font-semibold"
+                :class="confirmedSalesPricingResolverEnabled
+                  ? 'bg-green-100 text-green-700 dark:bg-green-900/30 dark:text-green-300'
+                  : 'bg-gray-100 text-gray-600 dark:bg-dark-700 dark:text-gray-300'"
+                data-testid="sales-pricing-current-status"
+              >
+                {{ confirmedSalesPricingResolverEnabled
+                  ? t('admin.settings.features.salesPricingResolver.currentEnabled')
+                  : t('admin.settings.features.salesPricingResolver.currentDisabled') }}
+              </span>
+            </div>
+          </div>
+          <div class="space-y-5 p-6">
+            <div
+              class="rounded-lg border border-red-200 bg-red-50 p-4 text-sm text-red-700 dark:border-red-800 dark:bg-red-900/20 dark:text-red-300"
+              role="alert"
+            >
+              {{ t('admin.settings.features.salesPricingResolver.dangerWarning') }}
+            </div>
+
+            <div class="flex items-center justify-between gap-4">
+              <div>
+                <label class="text-sm font-medium text-gray-700 dark:text-gray-300">
+                  {{ t('admin.settings.features.salesPricingResolver.enabled') }}
+                </label>
+                <p class="mt-0.5 text-xs text-gray-500 dark:text-gray-400">
+                  {{ t('admin.settings.features.salesPricingResolver.enabledHint') }}
+                </p>
+              </div>
+              <Toggle
+                v-model="form.sales_pricing_resolver_enabled"
+                data-testid="sales-pricing-resolver-toggle"
+              />
+            </div>
+
+            <div>
+              <label class="input-label" for="sales-pricing-change-reason">
+                {{ t('admin.settings.features.salesPricingResolver.reason') }}
+                <span v-if="salesPricingResolverChanged" class="text-red-500">*</span>
+              </label>
+              <textarea
+                id="sales-pricing-change-reason"
+                v-model="salesPricingChangeReason"
+                rows="3"
+                minlength="5"
+                maxlength="500"
+                class="input"
+                :aria-invalid="salesPricingResolverChanged && !isSalesPricingChangeReasonValid"
+                :placeholder="t('admin.settings.features.salesPricingResolver.reasonPlaceholder')"
+                data-testid="sales-pricing-change-reason"
+              ></textarea>
+              <div class="mt-1 flex items-start justify-between gap-4 text-xs">
+                <p :class="salesPricingResolverChanged && !isSalesPricingChangeReasonValid ? 'text-red-500' : 'text-gray-400'">
+                  {{ t('admin.settings.features.salesPricingResolver.reasonHint') }}
+                </p>
+                <span class="flex-shrink-0 text-gray-400">{{ salesPricingChangeReason.length }}/500</span>
+              </div>
+            </div>
+          </div>
+        </div>
+
+        <div class="card">
+          <div class="border-b border-gray-100 px-6 py-4 dark:border-dark-700">
+            <h2 class="text-lg font-semibold text-gray-900 dark:text-white">
+              {{ t('admin.settings.features.openaiRemoteCompactionV2.title') }}
+            </h2>
+            <p class="mt-1 text-sm text-gray-500 dark:text-gray-400">
+              {{ t('admin.settings.features.openaiRemoteCompactionV2.description') }}
+            </p>
+          </div>
+          <div class="space-y-5 p-6">
+            <div class="flex items-center justify-between">
+              <div>
+                <label class="text-sm font-medium text-gray-700 dark:text-gray-300">
+                  {{ t('admin.settings.features.openaiRemoteCompactionV2.enabled') }}
+                </label>
+                <p class="mt-0.5 text-xs text-gray-500 dark:text-gray-400">
+                  {{ t('admin.settings.features.openaiRemoteCompactionV2.enabledHint') }}
+                </p>
+              </div>
+              <Toggle v-model="form.openai_remote_compaction_v2_enabled" />
             </div>
           </div>
         </div>
@@ -7081,6 +7288,11 @@ const smtpPasswordManuallyEdited = ref(false);
 const testEmailAddress = ref("");
 const registrationEmailSuffixWhitelistTags = ref<string[]>([]);
 const registrationEmailSuffixWhitelistDraft = ref("");
+const xSearchPricePerRequest = ref("");
+const xSearchPriceLoading = ref(false);
+const xSearchPriceSaving = ref(false);
+const xSearchPriceLoadError = ref(false);
+const xSearchPriceSaveError = ref(false);
 const tablePageSizeOptionsInput = ref("10, 20, 50, 100");
 
 // Admin API Key 状态
@@ -7240,6 +7452,8 @@ const form = reactive<SettingsForm>({
   registration_enabled: true,
   email_verify_enabled: false,
   registration_email_suffix_whitelist: [],
+  registration_domain_limit_enabled: false,
+  registration_domain_limit_per_domain: 3,
   promo_code_enabled: true,
   invitation_code_enabled: false,
   password_reset_enabled: false,
@@ -7453,8 +7667,33 @@ const form = reactive<SettingsForm>({
   // Available Channels feature switch
   available_channels_enabled: false,
   model_square_enabled: false,
+  openai_remote_compaction_v2_enabled: true,
+  group_usage_rollup_enabled: true,
+  sales_pricing_resolver_enabled: true,
+  openai_team_linked_resolver_enabled: true,
   // Affiliate (邀请返利) feature switch
   affiliate_enabled: false,
+});
+
+const confirmedOpenAIRemoteCompactionV2Enabled = ref(true);
+const confirmedGroupUsageRollupEnabled = ref(true);
+const confirmedSalesPricingResolverEnabled = ref(true);
+const confirmedOpenAITeamLinkedResolverEnabled = ref(true);
+const salesPricingChangeReason = ref("");
+const openAITeamLinkedChangeReason = ref("");
+const salesPricingResolverChanged = computed(
+  () => form.sales_pricing_resolver_enabled !== confirmedSalesPricingResolverEnabled.value,
+);
+const isSalesPricingChangeReasonValid = computed(() => {
+  const length = salesPricingChangeReason.value.trim().length;
+  return length >= 5 && length <= 500;
+});
+const openAITeamLinkedResolverChanged = computed(
+  () => form.openai_team_linked_resolver_enabled !== confirmedOpenAITeamLinkedResolverEnabled.value,
+);
+const isOpenAITeamLinkedChangeReasonValid = computed(() => {
+  const length = openAITeamLinkedChangeReason.value.trim().length;
+  return length >= 5 && length <= 500;
 });
 
 const authSourceDefaults = reactive<AuthSourceDefaultsState>(
@@ -8107,7 +8346,7 @@ function removeBalanceNotifyExcludedUser(userId: number) {
   balanceNotifyExcludedUsers.value = balanceNotifyExcludedUsers.value.filter((user) => user.id !== userId);
 }
 
-async function loadSettings() {
+async function loadSettings(): Promise<boolean> {
   loading.value = true;
   loadFailed.value = false;
   try {
@@ -8118,6 +8357,28 @@ async function loadSettings() {
     for (const [key, value] of Object.entries(settings)) {
       if (value !== null && value !== undefined) {
         (form as Record<string, unknown>)[key] = value;
+      }
+    }
+    confirmedOpenAIRemoteCompactionV2Enabled.value =
+      settings.openai_remote_compaction_v2_enabled !== false;
+    confirmedGroupUsageRollupEnabled.value =
+      settings.group_usage_rollup_enabled !== false;
+    confirmedSalesPricingResolverEnabled.value =
+      settings.sales_pricing_resolver_enabled !== false;
+    confirmedOpenAITeamLinkedResolverEnabled.value =
+      settings.openai_team_linked_resolver_enabled !== false;
+    const getXSearchPrice = (adminAPI.settings as typeof adminAPI.settings & { getXSearchPrice?: () => Promise<{ price_per_request: string }> }).getXSearchPrice;
+    if (getXSearchPrice) {
+      xSearchPriceLoading.value = true;
+      xSearchPriceLoadError.value = false;
+      try {
+        xSearchPricePerRequest.value = (await getXSearchPrice()).price_per_request || "";
+      } catch {
+        // This optional endpoint must not make the legacy settings page fail.
+        xSearchPricePerRequest.value = "";
+        xSearchPriceLoadError.value = true;
+      } finally {
+        xSearchPriceLoading.value = false;
       }
     }
     form.balance_low_notify_excluded_user_ids = Array.isArray(settings.balance_low_notify_excluded_user_ids)
@@ -8140,6 +8401,8 @@ async function loadSettings() {
     Object.assign(authSourceDefaults, buildAuthSourceDefaultsState(settings));
     form.default_platform_quotas = normalizePlatformQuotasMap(settings.default_platform_quotas);
     form.backend_mode_enabled = settings.backend_mode_enabled;
+    form.registration_domain_limit_enabled = settings.registration_domain_limit_enabled ?? false;
+    form.registration_domain_limit_per_domain = settings.registration_domain_limit_per_domain || 3;
     form.default_subscriptions = normalizeDefaultSubscriptionSettings(
       settings.default_subscriptions,
     );
@@ -8237,11 +8500,13 @@ async function loadSettings() {
 
     // Load web search emulation config separately
     await loadWebSearchConfig();
+    return true;
   } catch (error: unknown) {
     loadFailed.value = true;
     appStore.showError(
       extractApiErrorMessage(error, t("admin.settings.failedToLoad")),
     );
+    return false;
   } finally {
     loading.value = false;
   }
@@ -8317,7 +8582,23 @@ function findDuplicateDefaultSubscription(
 
 async function saveSettings() {
   saving.value = true;
+  xSearchPriceSaveError.value = false;
+  let settingsUpdateRequested = false;
+  const pendingSalesPricingResolverEnabled = form.sales_pricing_resolver_enabled;
+  const pendingSalesPricingChangeReason = salesPricingChangeReason.value;
+  const pendingOpenAITeamLinkedResolverEnabled = form.openai_team_linked_resolver_enabled;
+  const pendingOpenAITeamLinkedChangeReason = openAITeamLinkedChangeReason.value;
   try {
+    if (salesPricingResolverChanged.value && !isSalesPricingChangeReasonValid.value) {
+      appStore.showError(
+        t("admin.settings.features.salesPricingResolver.reasonValidation"),
+      );
+      return;
+    }
+    if (openAITeamLinkedResolverChanged.value && !isOpenAITeamLinkedChangeReasonValid.value) {
+      appStore.showError(t("admin.settings.features.openaiTeamLinkedResolver.reasonValidation"));
+      return;
+    }
     const normalizedTableDefaultPageSize = Math.floor(
       Number(form.table_default_page_size),
     );
@@ -8530,6 +8811,8 @@ async function saveSettings() {
         registrationEmailSuffixWhitelistTags.value.map((suffix) =>
           suffix.startsWith("*.") ? suffix : `@${suffix}`,
         ),
+      registration_domain_limit_enabled: form.registration_domain_limit_enabled,
+      registration_domain_limit_per_domain: form.registration_domain_limit_per_domain,
       promo_code_enabled: form.promo_code_enabled,
       invitation_code_enabled: form.invitation_code_enabled,
       password_reset_enabled: form.password_reset_enabled,
@@ -8746,6 +9029,8 @@ async function saveSettings() {
       available_channels_enabled: form.available_channels_enabled,
       // Dedicated Model Square feature switch
       model_square_enabled: form.model_square_enabled,
+      openai_remote_compaction_v2_enabled: form.openai_remote_compaction_v2_enabled,
+      group_usage_rollup_enabled: form.group_usage_rollup_enabled,
       // Affiliate (邀请返利) feature switch
       affiliate_enabled: form.affiliate_enabled,
     };
@@ -8780,7 +9065,16 @@ async function saveSettings() {
 
     payload.default_platform_quotas = sanitizePlatformQuotasMap(form.default_platform_quotas);
     appendAuthSourceDefaultsToUpdateRequest(payload, authSourceDefaults);
+    if (salesPricingResolverChanged.value) {
+      payload.sales_pricing_resolver_enabled = form.sales_pricing_resolver_enabled;
+      payload.sales_pricing_change_reason = salesPricingChangeReason.value.trim();
+    }
+    if (openAITeamLinkedResolverChanged.value) {
+      payload.openai_team_linked_resolver_enabled = form.openai_team_linked_resolver_enabled;
+      payload.openai_team_linked_change_reason = openAITeamLinkedChangeReason.value.trim();
+    }
 
+    settingsUpdateRequested = true;
     const updated = await adminAPI.settings.updateSettings(payload);
     for (const [key, value] of Object.entries(updated)) {
       if (key === "openai_fast_policy_settings") continue;
@@ -8788,8 +9082,29 @@ async function saveSettings() {
         (form as Record<string, unknown>)[key] = value;
       }
     }
+    confirmedOpenAIRemoteCompactionV2Enabled.value =
+      updated.openai_remote_compaction_v2_enabled !== false;
+    confirmedGroupUsageRollupEnabled.value =
+      updated.group_usage_rollup_enabled !== false;
+    confirmedSalesPricingResolverEnabled.value =
+      updated.sales_pricing_resolver_enabled !== false;
+    confirmedOpenAITeamLinkedResolverEnabled.value =
+      updated.openai_team_linked_resolver_enabled !== false;
     Object.assign(authSourceDefaults, buildAuthSourceDefaultsState(updated));
     form.default_platform_quotas = normalizePlatformQuotasMap(updated.default_platform_quotas);
+    const updateXSearchPrice = (adminAPI.settings as typeof adminAPI.settings & { updateXSearchPrice?: (price: string) => Promise<{ price_per_request: string }> }).updateXSearchPrice;
+    if (updateXSearchPrice) {
+      xSearchPriceSaving.value = true;
+      xSearchPriceSaveError.value = false;
+      try {
+        xSearchPricePerRequest.value = (await updateXSearchPrice(xSearchPricePerRequest.value.trim())).price_per_request;
+      } catch (error: unknown) {
+        xSearchPriceSaveError.value = true;
+        appStore.showError(extractApiErrorMessage(error, t("admin.settings.registration.xSearchPriceSaveError")));
+      } finally {
+        xSearchPriceSaving.value = false;
+      }
+    }
     registrationEmailSuffixWhitelistTags.value =
       normalizeRegistrationEmailSuffixDomains(
         updated.registration_email_suffix_whitelist,
@@ -8851,10 +9166,27 @@ async function saveSettings() {
     // Refresh cached settings so sidebar/header update immediately
     await appStore.fetchPublicSettings(true);
     await adminSettingsStore.fetch(true);
-    if (wsOk) {
+    if (wsOk && !xSearchPriceSaveError.value) {
+      salesPricingChangeReason.value = "";
+      openAITeamLinkedChangeReason.value = "";
       appStore.showSuccess(t("admin.settings.settingsSaved"));
     }
   } catch (error: unknown) {
+    if (settingsUpdateRequested) {
+      // The settings write precedes optional side effects such as payment
+      // provider refresh. Reload the confirmed server state so an error in
+      // a later side effect never makes a runtime rollback look unapplied.
+      const reloaded = await loadSettings();
+      if (!reloaded) {
+        form.openai_remote_compaction_v2_enabled =
+          confirmedOpenAIRemoteCompactionV2Enabled.value;
+        form.group_usage_rollup_enabled = confirmedGroupUsageRollupEnabled.value;
+      }
+      form.sales_pricing_resolver_enabled = pendingSalesPricingResolverEnabled;
+      salesPricingChangeReason.value = pendingSalesPricingChangeReason;
+      form.openai_team_linked_resolver_enabled = pendingOpenAITeamLinkedResolverEnabled;
+      openAITeamLinkedChangeReason.value = pendingOpenAITeamLinkedChangeReason;
+    }
     appStore.showError(
       extractApiErrorMessage(error, t("admin.settings.failedToSave")),
     );
